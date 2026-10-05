@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">1원 받기</string>
+    <string name="accessibility_description">사용자가 지정한 A/B 좌표를 터치하고, 등록된 화면 상태를 확인해 뒤로가기를 실행합니다. 화면과 좌표는 기기에만 보관됩니다.</string>
+</resources>
