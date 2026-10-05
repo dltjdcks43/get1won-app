@@ -6,42 +6,51 @@ import static org.junit.Assert.*;
 
 public class EngineTest {
     static class Rig implements Engine.Port {
-        Engine engine=new Engine(this);List<Integer> effects=new ArrayList<>();long time=1_000_000_000L;boolean fail;
-        public boolean act(int step,long epoch){effects.add(step);return !fail;}
+        final Engine engine=new Engine(this);final List<Integer> actions=new ArrayList<>();
+        final float[] home=scene(.15f),detail=scene(.7f),b=scene(.4f),motion=scene(.9f);
+        long time=1_000_000_000L;int frameId,backFrame=-1;boolean accepted=true;
+        public boolean act(int step,long generation){actions.add(step);if(step==2)backFrame=frameId;return accepted;}
         public void log(String s){}
-        void start(int limit,int timeout){engine.start(time,limit,timeout);}
-        void f(long ms,boolean h,boolean d,boolean r,boolean w,boolean b){time+=ms*1_000_000;engine.frame(new Engine.Frame(engine.epoch(),time,h,d,r,w,b));}
-        void home(){f(20,true,false,false,false,false);f(360,true,false,false,false,false);}
-        void reward(){f(20,false,true,true,false,false);}
-        void waiting(long ms){f(ms,false,true,false,true,false);}
-        void b(){f(20,false,false,false,false,true);f(510,false,false,false,false,true);}
-    }
-    @Test public void fiftyCyclesForEveryRewardDelay(){
-        for(int delay:new int[]{3000,3500,5000,7000}) {
-            Rig r=new Rig();r.start(50,15);r.home();
-            for(int cycle=0;cycle<50;cycle++){
-                r.waiting(delay);assertEquals(cycle*4+1,r.effects.size());
-                r.reward();assertEquals(cycle*4+2,r.effects.size());
-                r.reward();assertEquals(cycle*4+2,r.effects.size());
-                r.home();assertEquals(cycle*4+3,r.effects.size());
-                r.b();assertEquals(cycle*4+4,r.effects.size());r.home();
-            }
-            assertEquals(50,r.engine.completed);assertEquals(Engine.State.IDLE,r.engine.state);
-            assertEquals(200,r.effects.size());for(int i=0;i<200;i++)assertEquals(i%4+1,(int)r.effects.get(i));
+        static float[] scene(float value){float[] s=new float[ScreenStability.SIZE];Arrays.fill(s,value);return s;}
+        void start(int repeats){engine.start(time,repeats);frame(17,false,false,home);}
+        void frame(long ms,boolean complete,boolean waiting,float[] image){time+=ms*1_000_000;frameId++;engine.frame(new Engine.Frame(engine.generation(),time,complete,waiting,image));}
+        void waiting(long ms){while(ms>0){long delta=Math.min(ms,33);frame(delta,false,true,detail);ms-=delta;}}
+        void complete(){frame(17,true,false,detail);}
+        void transition(float[] destination,int duration,Random random){
+            int prior=actions.size(),elapsed=0;
+            while(elapsed<duration){int dt=Math.min(duration-elapsed,10+random.nextInt(31));elapsed+=dt;Arrays.fill(motion,(frameId%2==0)?.92f:.2f);frame(dt,false,false,motion);assertEquals("action during transition",prior,actions.size());}
+            frame(17,false,false,destination);
+            for(int i=0;i<7;i++){frame(33,false,false,destination);assertEquals(prior,actions.size());}
+            frame(33,false,false,destination);
         }
     }
-    @Test public void waitingForeverNeverBack(){Rig r=new Rig();r.start(0,0);r.home();for(int i=0;i<100;i++)r.waiting(1000);assertEquals(List.of(1),r.effects);assertEquals(Engine.State.WAIT_REWARD,r.engine.state);}
-    @Test public void timeoutOnlyPausesEvenIfRewardArrivesLate(){Rig r=new Rig();r.start(1,10);r.home();r.waiting(1);r.waiting(10_001);assertEquals(Engine.State.PAUSED,r.engine.state);r.reward();r.home();r.b();assertEquals(List.of(1),r.effects);}
-    @Test public void firstRewardFrameCallsBackSynchronously(){Rig r=new Rig();r.start(1,15);r.home();r.reward();assertEquals(List.of(1,2),r.effects);assertEquals(Engine.State.WAIT_HOME_AFTER_STEP2,r.engine.state);}
-    @Test public void bothLabelsAlwaysBlockBack(){Rig r=new Rig();r.start(1,0);r.home();for(int i=0;i<50;i++)r.f(100,false,true,true,true,false);assertEquals(List.of(1),r.effects);}
-    @Test public void unknownScreenCannotAuthorizeBOrBack(){Rig r=new Rig();r.start(1,0);r.home();r.reward();for(int i=0;i<20;i++)r.f(1000,false,false,false,false,false);assertEquals(List.of(1,2),r.effects);r.home();for(int i=0;i<20;i++)r.f(1000,false,false,false,false,false);assertEquals(List.of(1,2,3),r.effects);}
-    @Test public void bTransitionMustRemainStable(){Rig r=new Rig();r.start(1,15);r.home();r.reward();r.home();r.f(10,false,false,false,false,true);r.f(300,false,false,false,false,false);r.f(300,false,false,false,false,true);assertEquals(List.of(1,2,3),r.effects);r.f(501,false,false,false,false,true);assertEquals(List.of(1,2,3,4),r.effects);}
-    @Test public void oldEpochCannotActAfterPauseResume(){Rig r=new Rig();r.start(1,15);r.home();long old=r.engine.epoch();r.engine.pause("test");r.engine.resume(r.time+1);r.engine.frame(new Engine.Frame(old,r.time+20_000_000,false,true,true,false,false));assertEquals(List.of(1),r.effects);r.reward();assertEquals(List.of(1,2),r.effects);}
-    @Test public void noEffectsAfterStop(){Rig r=new Rig();r.start(1,15);r.home();r.engine.stop();r.reward();r.home();r.b();assertEquals(List.of(1),r.effects);}
-    @Test public void noQueuedHomeTimerAfterPause(){Rig r=new Rig();r.start(1,15);r.home();r.reward();r.f(20,true,false,false,false,false);r.engine.pause("user");r.home();assertEquals(List.of(1,2),r.effects);}
-    @Test public void failedActionIsNeverRetried(){Rig r=new Rig();r.start(1,15);r.fail=true;r.home();r.home();assertEquals(List.of(1),r.effects);assertEquals(Engine.State.ERROR,r.engine.state);}
-    @Test public void rewardOnHomeIsNotValid(){Rig r=new Rig();r.start(1,15);r.home();r.f(50,true,true,true,false,false);assertEquals(List.of(1),r.effects);}
-    @Test public void waitingOnBPreventsStep4(){Rig r=new Rig();r.start(1,0);r.home();r.reward();r.home();r.f(10,false,false,false,true,true);r.f(1000,false,false,false,true,true);assertEquals(List.of(1,2,3),r.effects);}
-    @Test public void oldTimestampCannotCompleteNewCycle(){Rig r=new Rig();r.start(1,15);r.home();r.engine.frame(new Engine.Frame(r.engine.epoch(),1,false,true,true,false,false));assertEquals(List.of(1),r.effects);}
-    @Test public void watchdogPausesWhenFramesStop(){Rig r=new Rig();r.start(1,10);r.home();r.engine.tick(r.time+10_000_000_001L);assertEquals(Engine.State.PAUSED,r.engine.state);assertEquals(List.of(1),r.effects);}
+    @Test public void randomizedFiftyAndHundredCyclesPreserveEveryGate(){
+        for(int count:new int[]{50,100}){
+            Rig r=new Rig();r.start(count);Random random=new Random(725+count);
+            for(int cycle=0;cycle<count;cycle++){
+                r.waiting(5500+random.nextInt(2001));assertEquals(cycle*4+1,r.actions.size());
+                r.complete();assertEquals(cycle*4+2,r.actions.size());assertEquals(r.frameId,r.backFrame);
+                r.transition(r.home,300+random.nextInt(601),random);assertEquals(cycle*4+3,r.actions.size());
+                r.transition(r.b,300+random.nextInt(601),random);assertEquals(cycle*4+4,r.actions.size());
+                r.transition(r.home,300+random.nextInt(601),random);
+            }
+            assertEquals(count,r.engine.completed);assertEquals(count*4,r.actions.size());assertEquals(Engine.State.IDLE,r.engine.state);
+            for(int n=0;n<r.actions.size();n++)assertEquals(n%4+1,(int)r.actions.get(n));
+        }
+    }
+    @Test public void everyRequestedDisplayDelayNeverBecomesBackTimer(){for(int delay:new int[]{3000,3500,5000,6100,7000,10000}){Rig r=new Rig();r.start(1);r.waiting(delay);assertEquals(List.of(1),r.actions);r.complete();assertEquals(List.of(1,2),r.actions);assertEquals(r.frameId,r.backFrame);}}
+    @Test public void allTransitionDurationsRequireActualStability(){for(int duration:new int[]{250,400,500,700,1000}){Rig r=new Rig();r.start(1);r.complete();Random random=new Random(duration);r.transition(r.home,duration,random);r.transition(r.b,duration,random);r.transition(r.home,duration,random);assertEquals(List.of(1,2,3,4),r.actions);assertEquals(1,r.engine.completed);}}
+    @Test public void completionNeverAppearsOnlyPauses(){Rig r=new Rig();r.start(1);r.waiting(30000);assertEquals(List.of(1),r.actions);assertEquals(Engine.State.PAUSED,r.engine.state);r.complete();assertEquals(List.of(1),r.actions);}
+    @Test public void persistentCompletionCannotDuplicateBack(){Rig r=new Rig();r.start(1);r.complete();for(int n=0;n<30;n++)r.complete();assertEquals(List.of(1,2),r.actions);}
+    @Test public void simultaneousWaitingBlocksPositiveMatch(){Rig r=new Rig();r.start(1);for(int n=0;n<30;n++)r.frame(33,true,true,r.detail);assertEquals(List.of(1),r.actions);}
+    @Test public void unchangedOldScreenIsNotACompletedTransition(){Rig r=new Rig();r.start(1);r.complete();for(int n=0;n<70;n++)r.frame(33,false,false,r.detail);assertEquals(List.of(1,2),r.actions);assertEquals(Engine.State.PAUSED,r.engine.state);}
+    @Test public void endlessAnimationPausesWithoutFallback(){Rig r=new Rig();r.start(1);r.complete();for(int n=0;n<70;n++)r.frame(33,false,false,n%2==0?r.home:r.b);assertEquals(List.of(1,2),r.actions);assertEquals(Engine.State.PAUSED,r.engine.state);}
+    @Test public void pausedAndResumedFramesNeedNewGenerationAndQuietWindow(){Rig r=new Rig();r.start(1);r.complete();r.frame(17,false,false,r.home);r.frame(200,false,false,r.home);long old=r.engine.generation();r.engine.pause("user");r.time+=1_000_000;r.engine.resume(r.time);r.engine.frame(new Engine.Frame(old,r.time+500_000_000,false,false,r.home));assertEquals(List.of(1,2),r.actions);for(int n=0;n<8;n++)r.frame(33,false,false,r.home);assertEquals(List.of(1,2),r.actions);r.frame(33,false,false,r.home);assertEquals(List.of(1,2,3),r.actions);}
+    @Test public void stopInvalidatesAllRemainingFrames(){Rig r=new Rig();r.start(1);r.complete();r.engine.stop();for(int n=0;n<100;n++)r.frame(33,false,false,n%2==0?r.home:r.b);assertEquals(List.of(1,2),r.actions);assertEquals(Engine.State.IDLE,r.engine.state);}
+    @Test public void settingsInvalidateEvenWhileIdleOrPaused(){Rig r=new Rig();long g=r.engine.generation();r.engine.settingsChanged();assertTrue(r.engine.generation()>g);r.start(1);r.engine.pause("user");g=r.engine.generation();r.engine.settingsChanged();r.complete();assertTrue(r.engine.generation()>g);assertEquals(List.of(1),r.actions);}
+    @Test public void restartDropsOldCompletion(){Rig r=new Rig();r.start(1);long g=r.engine.generation();r.engine.start(++r.time,1);r.engine.frame(new Engine.Frame(g,r.time+1000,true,false,r.detail));assertEquals(List.of(1),r.actions);}
+    @Test public void failedPlatformActionNeverRetries(){Rig r=new Rig();r.accepted=false;r.start(1);r.frame(200,false,false,r.home);assertEquals(Engine.State.ERROR,r.engine.state);assertEquals(List.of(1),r.actions);}
+    @Test public void missingFramesCannotFinishTransition(){Rig r=new Rig();r.start(1);r.complete();r.engine.tick(r.time+2_000_000_000L);assertEquals(Engine.State.PAUSED,r.engine.state);assertEquals(List.of(1,2),r.actions);}
+    @Test public void staleTimestampRejected(){Rig r=new Rig();r.start(1);r.engine.frame(new Engine.Frame(r.engine.generation(),r.time,true,false,r.detail));assertEquals(List.of(1),r.actions);}
+    @Test public void waitingOnBBlocksStep4(){Rig r=new Rig();r.start(1);r.complete();r.transition(r.home,400,new Random(1));for(int n=0;n<20;n++)r.frame(33,false,true,r.b);assertEquals(List.of(1,2,3),r.actions);}
 }

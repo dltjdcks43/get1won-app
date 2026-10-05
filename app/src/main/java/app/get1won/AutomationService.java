@@ -9,111 +9,119 @@ import android.view.accessibility.*;
 import android.widget.*;
 
 public final class AutomationService extends AccessibilityService {
-    private final Handler main=new Handler(Looper.getMainLooper());
-    private WindowManager wm;private LinearLayout panel;private TextView status;private View picker;
-    private WindowManager.LayoutParams panelParams;private boolean bottom=true;private String selectKey;
-    @Override protected void onServiceConnected(){AppState.initialize(this);AppState.accessibility=this;wm=getSystemService(WindowManager.class);showPanel();main.post(refresh);}
-    @Override public void onAccessibilityEvent(AccessibilityEvent event) { }
-    @Override public void onInterrupt(){AppState.engine.pause("접근성 서비스 중단");}
-    @Override public void onDestroy(){AppState.engine.pause("접근성 서비스 종료");AppState.accessibility=null;main.removeCallbacksAndMessages(null);if(panel!=null)wm.removeView(panel);if(picker!=null)wm.removeView(picker);super.onDestroy();}
-    public boolean targetVisible() {
+    private final Handler ui=new Handler(Looper.getMainLooper());
+    private WindowManager wm;private LinearLayout panel;private TextView status;private Button toggle;
+    private View picker;private boolean bottom=true;private WindowManager.LayoutParams params;
+    private volatile Rect bounds;
+    private String pendingSelection;private boolean pendingStart;private long pendingGeneration,pendingUntil;
+    @Override protected void onServiceConnected(){AppState.initialize(this);AppState.accessibility=this;wm=getSystemService(WindowManager.class);createPanel();ui.post(refresh);}
+    @Override public void onAccessibilityEvent(AccessibilityEvent event){if(pendingSelection!=null || pendingStart)ui.post(this::handlePending);}
+    @Override public void onInterrupt(){AppState.engine.pause("접근성 연결 중단");}
+    @Override public void onDestroy(){AppState.engine.pause("접근성 연결 종료");AppState.accessibility=null;ui.removeCallbacksAndMessages(null);if(picker!=null)wm.removeView(picker);if(panel!=null)wm.removeView(panel);super.onDestroy();}
+    public boolean targetVisible(){
         if(getSystemService(KeyguardManager.class).isKeyguardLocked())return false;
-        AccessibilityNodeInfo root=getRootInActiveWindow();
-        return root!=null && root.getPackageName()!=null && AppState.profile.targetPackage.contentEquals(root.getPackageName());
+        AccessibilityNodeInfo root=getRootInActiveWindow();String pkg=root==null?"":String.valueOf(root.getPackageName());
+        return !pkg.isEmpty() && pkg.equals(AppState.profile.targetPackage) && (!pkg.equals(getPackageName()) || TestActivity.visible);
     }
-    public boolean waitTextVisible(){return containsWaiting(getRootInActiveWindow(),0);}
-    private boolean containsWaiting(AccessibilityNodeInfo node,int depth) {
-        if(node==null || depth>25)return false;
-        String text=String.valueOf(node.getText())+" "+String.valueOf(node.getContentDescription());
-        if(node.isVisibleToUser() && (text.contains("3초 구경해요") || text.contains("3초 구경해주세요")))return true;
-        for(int i=0;i<node.getChildCount();i++)if(containsWaiting(node.getChild(i),depth+1))return true;return false;
+    public boolean waitTextVisible(){
+        AccessibilityNodeInfo root=getRootInActiveWindow();if(root==null)return true;
+        for(AccessibilityNodeInfo node:root.findAccessibilityNodeInfosByText("3초 구경")){
+            String text=String.valueOf(node.getText())+" "+String.valueOf(node.getContentDescription());
+            if(node.isVisibleToUser() && (text.contains("3초 구경해요") || text.contains("3초 구경해주세요")))return true;
+        }return false;
     }
-    public boolean execute(int step,long epoch) {
-        if(epoch!=AppState.engine.epoch() || !targetVisible())return false;
+    public boolean execute(int step,long generation){
+        if(generation!=AppState.engine.generation() || !AppState.engine.active() || !targetVisible())return false;
         CaptureService.lastActionNanos=System.nanoTime();
-        if(step==2 || step==4) {
-            if(waitTextVisible())return false;
-            return performGlobalAction(GLOBAL_ACTION_BACK);
-        }
+        if(step==2 || step==4){if(waitTextVisible())return false;return performGlobalAction(GLOBAL_ACTION_BACK);}
         Point p=step==1?AppState.profile.a:AppState.profile.b;if(p==null)return false;
         Path path=new Path();path.moveTo(p.x,p.y);
         return dispatchGesture(new GestureDescription.Builder().addStroke(new GestureDescription.StrokeDescription(path,0,1)).build(),new GestureResultCallback(){
-            @Override public void onCancelled(GestureDescription gesture){synchronized(AppState.engine){if(AppState.engine.epoch()==epoch && AppState.engine.active())AppState.engine.fail("터치가 취소되었습니다");}}
-        },main);
+            @Override public void onCancelled(GestureDescription gesture){synchronized(AppState.engine){if(AppState.engine.generation()==generation && AppState.engine.active())AppState.engine.fail("터치가 취소되었습니다");}}
+        },ui);
     }
-    private Button button(String text,Runnable action){Button b=new Button(this);b.setText(text);b.setTextSize(11);b.setMinHeight(0);b.setMinimumHeight(0);b.setMinWidth(0);b.setMinimumWidth(0);b.setPadding(8,2,8,2);b.setOnClickListener(v->action.run());return b;}
-    private void showPanel() {
-        panel=new LinearLayout(this);panel.setOrientation(LinearLayout.VERTICAL);panel.setPadding(6,6,6,6);panel.setBackgroundColor(0xEEFFFFFF);
-        status=new TextView(this);status.setTextColor(Color.BLACK);status.setTextSize(11);panel.addView(status);
-        LinearLayout row=new LinearLayout(this);row.addView(button("시작",this::start));row.addView(button("일시정지",()->AppState.engine.pause("사용자 일시정지")));row.addView(button("재개",()->{if(AppState.capturing)AppState.engine.resume(System.nanoTime());}));panel.addView(row);
-        LinearLayout row2=new LinearLayout(this);row2.addView(button("중지",()->{AppState.engine.stop();CaptureService.cancelRegistration();selectKey=null;removePicker();}));row2.addView(button("위/아래",()->{bottom=!bottom;placePanel();}));row2.addView(button("영역/위치",this::selectionMenu));panel.addView(row2);
-        panelParams=new WindowManager.LayoutParams(dp(260),WindowManager.LayoutParams.WRAP_CONTENT,WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE|WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,PixelFormat.TRANSLUCENT);
-        panelParams.setFitInsetsTypes(0);panelParams.gravity=Gravity.TOP|Gravity.LEFT;wm.addView(panel,panelParams);panel.post(this::placePanel);
+    private int dp(int value){return Math.round(value*getResources().getDisplayMetrics().density);}
+    private Button button(String label,Runnable action){Button b=new Button(this);b.setText(label);b.setTextSize(11);b.setMinWidth(0);b.setMinimumWidth(0);b.setPadding(dp(5),0,dp(5),0);b.setOnClickListener(v->action.run());return b;}
+    @android.annotation.SuppressLint("RtlHardcoded") // Raw display coordinates must always use the physical left edge.
+    private void createPanel(){
+        panel=new LinearLayout(this);panel.setOrientation(LinearLayout.VERTICAL);panel.setPadding(dp(8),dp(6),dp(8),0);panel.setBackgroundColor(0xF2FFFFFF);
+        status=new TextView(this);status.setTextColor(Color.BLACK);status.setTextSize(12);panel.addView(status);
+        LinearLayout row=new LinearLayout(this);
+        toggle=button("일시정지",()->{if(AppState.engine.state==Engine.State.PAUSED){if(AppState.capturing && targetVisible())AppState.engine.resume(System.nanoTime());}else AppState.engine.pause("사용자 일시정지");});
+        row.addView(toggle);row.addView(button("중지",AppState::stop));row.addView(button("위/아래",()->{bottom=!bottom;placePanel();}));panel.addView(row);
+        params=new WindowManager.LayoutParams(dp(240),WindowManager.LayoutParams.WRAP_CONTENT,WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE|WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,PixelFormat.TRANSLUCENT);
+        params.setFitInsetsTypes(0);params.gravity=Gravity.TOP|Gravity.LEFT;panel.setVisibility(View.GONE);wm.addView(panel,params);
     }
-    private int dp(int x){return Math.round(x*getResources().getDisplayMetrics().density);}
-    public void prepareSelection(String key){AppState.engine.pause("좌표/영역 설정");selectKey=key;AppState.log("대상 화면으로 이동 후 플로팅창의 영역/위치 → 지정 시작을 누르세요");}
-    private void selectionMenu() {
-        String[] labels={"지정 시작 (선택한 항목)","1번 위치 지정","3번 위치 지정","1원 받았어요 영역 지정","3초 대기 기준 저장 (같은 영역)","HOME 기준 영역 지정","B 화면 기준 영역 지정"};
-        android.app.AlertDialog dialog=new android.app.AlertDialog.Builder(this).setTitle("대상 화면을 먼저 열어주세요").setItems(labels,(d,i)->{
-            if(i>0)selectKey=new String[]{"a","b","reward","waiting","home","screenB"}[i-1];
-            if(selectKey==null){AppState.log("설정 항목을 먼저 선택하세요");return;}
-            AppState.engine.pause("설정 중");CaptureService.cancelRegistration();
-            if(selectKey.equals("waiting")){
-                synchronized(AppState.profile){Profile.Template t=AppState.profile.templates.get("reward");if(t==null){AppState.log("보상 영역을 먼저 지정하세요");return;}CaptureService.register("waiting",t.rect());}return;
-            }
-            openPicker(selectKey);
-        }).setNegativeButton("취소",null).create();
-        dialog.getWindow().setType(WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY);dialog.show();
+    public Rect overlayBounds(){return bounds;}
+    private boolean overlaps(Rect box){synchronized(AppState.profile){Profile p=AppState.profile;return (p.a!=null && box.contains(p.a.x,p.a.y)) || (p.b!=null && box.contains(p.b.x,p.b.y)) || (p.roi!=null && Rect.intersects(box,p.roi));}}
+    private boolean placePanel(){
+        Rect display=wm.getMaximumWindowMetrics().getBounds();int h=Math.max(panel.getHeight(),dp(120)),w=dp(240);
+        int top=dp(34),low=display.height()-h-dp(45);
+        for(int y:bottom?new int[]{low,top}:new int[]{top,low})for(int x:new int[]{0,Math.max(0,display.width()-w)}){
+            Rect box=new Rect(x,y,x+w,y+h);if(!overlaps(box)){params.x=x;params.y=y;wm.updateViewLayout(panel,params);box.inset(-dp(6),-dp(6));bounds=box;return true;}
+        }return false;
     }
-    private void openPicker(String key) {
-        if(!key.equals("a") && !key.equals("b") && !AppState.capturing){AppState.log("화면 공유를 먼저 시작하세요");return;}
-        removePicker();panel.setVisibility(View.GONE);
-        picker=new View(this) {
-            float x,y,endX,endY;final Paint paint=new Paint(Paint.ANTI_ALIAS_FLAG);
-            @Override protected void onDraw(Canvas canvas){paint.setColor(0xCCFFFFFF);canvas.drawRect(0,getHeight()-dp(100),getWidth(),getHeight(),paint);paint.setColor(Color.BLACK);paint.setTextSize(dp(16));canvas.drawText(key+": 위치는 탭 / 영역은 드래그",20,getHeight()-dp(60),paint);canvas.drawText("취소: 아래 안내 영역 터치",20,getHeight()-dp(30),paint);paint.setColor(Color.RED);paint.setStyle(Paint.Style.STROKE);paint.setStrokeWidth(3);canvas.drawRect(Math.min(x,endX),Math.min(y,endY),Math.max(x,endX),Math.max(y,endY),paint);paint.setStyle(Paint.Style.FILL);}
-            @Override public boolean onTouchEvent(MotionEvent e) {
-                if(e.getAction()==MotionEvent.ACTION_DOWN){x=e.getRawX();y=e.getRawY();endX=x;endY=y;if(y>getHeight()-dp(100)){removePicker();return true;}}
-                if(e.getAction()==MotionEvent.ACTION_MOVE){endX=e.getRawX();endY=e.getRawY();invalidate();}
-                if(e.getAction()==MotionEvent.ACTION_UP){performClick();endX=e.getRawX();endY=e.getRawY();finishPick(key,(int)x,(int)y,(int)endX,(int)endY);}
+    void start(){
+        synchronized(AppState.engine){
+            CaptureService.cancelRegistration();
+            if(!AppState.capturing || !AppState.profile.ready() || !targetVisible()){AppState.notice="접근성·화면 공유·세 항목 설정을 확인하세요";return;}
+            if(!placePanel()){AppState.notice="플로팅창과 지정 위치가 겹칩니다";return;}
+            AppState.engine.start(System.nanoTime(),AppState.profile.repeats);
+        }
+    }
+    void prepareExternal(String key){
+        AppState.settingsChanged();pendingSelection=key;pendingStart=key==null;pendingGeneration=AppState.engine.generation();pendingUntil=SystemClock.uptimeMillis()+5000;
+    }
+    private void handlePending(){synchronized(AppState.engine){
+        if(pendingSelection==null && !pendingStart)return;
+        if(pendingGeneration!=AppState.engine.generation() || SystemClock.uptimeMillis()>pendingUntil){pendingSelection=null;pendingStart=false;return;}
+        AccessibilityNodeInfo root=getRootInActiveWindow();String pkg=root==null?"":String.valueOf(root.getPackageName());
+        if(pkg.isEmpty() || pkg.equals(getPackageName()))return;
+        if(pendingStart){if(targetVisible()){pendingStart=false;start();}}
+        else{String key=pendingSelection;pendingSelection=null;pick(key);}
+    }}
+    /** Called by the main screen through the built-in test screen, never from floating controls. */
+    @android.annotation.SuppressLint("RtlHardcoded") // Picker rawX/rawY and capture pixels share a physical origin.
+    void pick(String key){
+        AppState.settingsChanged();removePicker();panel.setVisibility(View.GONE);bounds=null;
+        final long generation=AppState.engine.generation();
+        picker=new View(this){
+            final Paint paint=new Paint(Paint.ANTI_ALIAS_FLAG);float x,y,ex,ey;boolean cancel;
+            @Override protected void onDraw(Canvas c){paint.setColor(0xEEFFFFFF);c.drawRect(0,getHeight()-dp(78),getWidth(),getHeight(),paint);paint.setColor(Color.BLACK);paint.setTextSize(dp(15));c.drawText(key.equals("completion")?"완료 글자 전체를 드래그하세요":"원하는 위치를 한 번 터치하세요",dp(10),getHeight()-dp(47),paint);c.drawText("취소: 아래 안내 영역 터치",dp(10),getHeight()-dp(20),paint);paint.setColor(Color.RED);paint.setStyle(Paint.Style.STROKE);paint.setStrokeWidth(dp(1));c.drawRect(Math.min(x,ex),Math.min(y,ey),Math.max(x,ex),Math.max(y,ey),paint);paint.setStyle(Paint.Style.FILL);}
+            @Override public boolean onTouchEvent(MotionEvent e){
+                if(e.getAction()==MotionEvent.ACTION_DOWN){x=ex=e.getRawX();y=ey=e.getRawY();cancel=y>getHeight()-dp(78);}
+                if(e.getAction()==MotionEvent.ACTION_MOVE){ex=e.getRawX();ey=e.getRawY();invalidate();}
+                if(e.getAction()==MotionEvent.ACTION_UP){performClick();if(cancel){removePicker();selectionSaved(generation);return true;}finishPick(key,(int)x,(int)y,(int)e.getRawX(),(int)e.getRawY(),generation);}
                 return true;
             }
             @Override public boolean performClick(){super.performClick();return true;}
         };
         WindowManager.LayoutParams lp=new WindowManager.LayoutParams(-1,-1,WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE|WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN|WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,PixelFormat.TRANSLUCENT);
-        lp.layoutInDisplayCutoutMode=WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS;lp.setFitInsetsTypes(0);lp.gravity=Gravity.TOP|Gravity.LEFT;wm.addView(picker,lp);
+        lp.setFitInsetsTypes(0);lp.layoutInDisplayCutoutMode=WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS;lp.gravity=Gravity.TOP|Gravity.LEFT;wm.addView(picker,lp);
     }
-    private void finishPick(String key,int x,int y,int ex,int ey) {
-        AccessibilityNodeInfo root=getRootInActiveWindow();String pkg=root==null || root.getPackageName()==null?"":root.getPackageName().toString();
-        removePicker();Profile p=AppState.profile;Rect bounds=wm.getMaximumWindowMetrics().getBounds();
-        synchronized(p) {
-            int rotation=getSystemService(android.hardware.display.DisplayManager.class).getDisplay(Display.DEFAULT_DISPLAY).getRotation();
-            if(p.width!=bounds.width() || p.height!=bounds.height() || p.rotation!=rotation || (!p.targetPackage.isEmpty()&&!pkg.equals(p.targetPackage))) {p.a=null;p.b=null;p.templates.clear();}
-            p.width=bounds.width();p.height=bounds.height();p.rotation=rotation;p.targetPackage=pkg;
-            if(key.equals("a"))p.a=new Point(x,y);else if(key.equals("b"))p.b=new Point(x,y);else {
-                Rect r=new Rect(Math.min(x,ex),Math.min(y,ey),Math.max(x,ex),Math.max(y,ey));
-                if(r.width()<16 || r.height()<12){AppState.log("영역이 너무 작습니다");return;}
-                CaptureService.register(key,r);
-            }p.save(this);
-        }selectKey=null;AppState.log(key+" 지정: "+x+","+y+" → "+ex+","+ey);placePanel();
+    private void finishPick(String key,int x,int y,int ex,int ey,long generation){
+        synchronized(AppState.engine){
+            if(generation!=AppState.engine.generation()){removePicker();return;}
+            removePicker();Rect screen=wm.getMaximumWindowMetrics().getBounds();int rotation=getSystemService(android.hardware.display.DisplayManager.class).getDisplay(Display.DEFAULT_DISPLAY).getRotation();
+            AccessibilityNodeInfo target=getRootInActiveWindow();String pkg=target==null?"":String.valueOf(target.getPackageName());
+            synchronized(AppState.profile){
+                Profile p=AppState.profile;p.setGeometry(screen.width(),screen.height(),rotation);if(!pkg.equals(p.targetPackage))p.invalidate();p.targetPackage=pkg;
+                if(key.equals("a"))p.a=new Point(x,y);else if(key.equals("b"))p.b=new Point(x,y);else{
+                    Rect roi=new Rect(Math.min(x,ex),Math.min(y,ey),Math.max(x,ex),Math.max(y,ey));
+                    if(roi.width()<32 || roi.height()<16){AppState.notice="영역이 너무 작습니다";selectionSaved(generation);return;}
+                    CaptureService.register(roi);return;
+                }p.save(this);
+            }AppState.notice="위치 저장 완료";selectionSaved(generation);
+        }
     }
-    private void removePicker(){if(picker!=null){wm.removeView(picker);picker=null;}if(panel!=null)panel.setVisibility(View.VISIBLE);}
-    private boolean overlaps(Rect box) {
-        Rect registration=CaptureService.registrationRect();if(registration!=null && Rect.intersects(box,registration))return true;
-        synchronized(AppState.profile){Profile p=AppState.profile;
-            if((p.a!=null && box.contains(p.a.x,p.a.y)) || (p.b!=null && box.contains(p.b.x,p.b.y)))return true;
-            for(Profile.Template t:p.templates.values())if(Rect.intersects(box,t.rect()))return true;return false;}
-    }
-    private boolean placePanel() {
-        if(panel==null)return false;Rect bounds=wm.getMaximumWindowMetrics().getBounds();int height=Math.max(panel.getHeight(),dp(170));int width=dp(260);
-        int[] ys=bottom?new int[]{bounds.height()-height-dp(50),dp(40),bounds.height()/2}:new int[]{dp(40),bounds.height()-height-dp(50),bounds.height()/2};
-        for(int y:ys)for(int x:new int[]{0,Math.max(0,bounds.width()-width)}){Rect box=new Rect(x,y,x+width,y+height);if(!overlaps(box)){panelParams.x=x;panelParams.y=y;wm.updateViewLayout(panel,panelParams);return true;}}
-        return false;
-    }
-    void start() {
-        CaptureService.cancelRegistration();
-        if(!AppState.capturing || !AppState.profile.ready()){AppState.log("시작 불가: 접근성·화면 공유·A/B·보상/대기/HOME/B화면 영역을 모두 설정하세요");return;}
-        if(!placePanel()){AppState.log("시작 불가: 플로팅창과 좌표/영역이 겹칩니다");return;}
-        AppState.engine.start(System.nanoTime(),AppState.profile.repeats,AppState.profile.timeoutSeconds);
-    }
-    private final Runnable refresh=new Runnable(){@Override public void run(){if(panel==null)return; synchronized(AppState.engine){status.setText("1원 받기  "+(AppState.engine.active()?"● 실행 중":"● 대기")+"\n"+AppState.engine.state+"\n반복: "+AppState.engine.completed+"회\n"+(selectKey==null?AppState.engine.reason:"지정 대기: "+selectKey));}if(!placePanel() && AppState.engine.active())AppState.engine.pause("플로팅창이 감지 영역을 가립니다");AppState.flushLogs(AutomationService.this);main.postDelayed(this,350);}};
+    private void removePicker(){if(picker!=null){wm.removeView(picker);picker=null;}}
+    public void cancelSelection(){pendingSelection=null;pendingStart=false;long generation=AppState.engine.generation();ui.post(()->{if(generation==AppState.engine.generation())removePicker();});}
+    public void selectionSaved(long generation){ui.post(()->{if(generation!=AppState.engine.generation())return;TestActivity a=TestActivity.current();if(a!=null)a.selectionFinished();});}
+    private final Runnable refresh=new Runnable(){public void run(){
+        if(panel==null)return;
+        handlePending();boolean show=picker==null && (AppState.engine.active() || AppState.engine.state==Engine.State.PAUSED);
+        panel.setVisibility(show?View.VISIBLE:View.GONE);
+        if(show){status.setText(getString(R.string.floating_status,AppState.engine.active()?"● 실행 중":"● 일시정지",Engine.label(AppState.engine.state),AppState.engine.completed));toggle.setText(AppState.engine.state==Engine.State.PAUSED?"재개":"일시정지");if(!placePanel())AppState.engine.pause("플로팅창이 지정 영역과 겹칩니다");}else bounds=null;
+        ui.postDelayed(this,100);
+    }};
 }

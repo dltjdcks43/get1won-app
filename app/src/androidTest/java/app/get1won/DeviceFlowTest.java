@@ -33,13 +33,11 @@ public class DeviceFlowTest {
         }
         until(()->AppState.capturing,5000,"화면 공유 동의 실패");
         TestActivity activity=(TestActivity)i.startActivitySync(new Intent(i.getTargetContext(),TestActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
-        i.waitForIdleSync();i.runOnMainSync(activity::calibrate);
+        i.waitForIdleSync();i.runOnMainSync(activity::calibrateForDeviceTest);
         until(activity::calibrationDone,15000,"테스트 이미지 등록 실패");
-        i.runOnMainSync(()->{AppState.profile.repeats=50;AppState.profile.timeoutSeconds=15;AppState.profile.testDelay=3000;AppState.accessibility.start();});
-        long deadline=SystemClock.uptimeMillis()+600000;
-        int[] delays={3000,3500,5000,7000};
+        i.runOnMainSync(()->{AppState.profile.repeats=50;AppState.profile.randomTest=true;activity.beginRun();});
+        long deadline=SystemClock.uptimeMillis()+900000;
         while(SystemClock.uptimeMillis()<deadline && AppState.engine.active()){
-            synchronized(AppState.engine){AppState.profile.testDelay=delays[(int)(AppState.engine.completed%4)];}
             SystemClock.sleep(200);
         }
         assertEquals(AppState.logs(),50,AppState.engine.completed);
@@ -47,9 +45,9 @@ public class DeviceFlowTest {
         final int[][] counters={null};i.runOnMainSync(()->counters[0]=activity.counters());
         assertArrayEquals(new int[]{50,0,0,0,0,0,0},counters[0]);
         long backs=AppState.engine.actions[1];
-        i.runOnMainSync(()->{AppState.profile.repeats=1;AppState.profile.timeoutSeconds=10;AppState.profile.testDelay=0;AppState.accessibility.start();});
-        until(()->AppState.engine.state==Engine.State.PAUSED,16000,"영구 대기에서 시간 초과 일시정지 실패");
+        i.runOnMainSync(()->{AppState.profile.repeats=1;AppState.profile.randomTest=false;AppState.profile.testDelay=0;activity.beginRun();});
+        until(()->AppState.engine.state==Engine.State.PAUSED,35000,"영구 대기에서 시간 초과 일시정지 실패");
         assertEquals(backs,AppState.engine.actions[1]);
-        AppState.engine.stop();activity.finish();
+        i.runOnMainSync(AppState::stop);long[] counts=AppState.engine.actions.clone();SystemClock.sleep(1000);assertArrayEquals(counts,AppState.engine.actions);i.runOnMainSync(activity::finish);
     }
 }

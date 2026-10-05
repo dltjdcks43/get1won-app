@@ -7,51 +7,49 @@ import android.media.Image;
 import org.json.*;
 import java.io.*;
 import java.nio.ByteBuffer;
-import java.util.*;
 
+/** Exactly three user calibration inputs: A, B, completion template. */
 public final class Profile {
     public static final int SAMPLE_W=160,SAMPLE_H=48;
     public Point a,b;
+    public Rect roi;
+    public float[] template;
     public int width,height,rotation;
     public String targetPackage="";
-    public volatile int repeats=1,timeoutSeconds=15,testDelay=3000;
-    public final Map<String,Template> templates=new HashMap<>();
-    public record Template(Rect rect,float[] pixels) {}
-    public synchronized boolean ready(){return a!=null && b!=null && !targetPackage.isEmpty() && templates.keySet().containsAll(List.of("reward","waiting","home","screenB"));}
-    public static float[] sample(Image image,Rect r) {
-        if(r.left<0 || r.top<0 || r.right>image.getWidth() || r.bottom>image.getHeight() || r.width()<16 || r.height()<12)
-            throw new IllegalArgumentException("ROI가 화면 밖이거나 너무 작습니다");
-        Image.Plane p=image.getPlanes()[0]; ByteBuffer buf=p.getBuffer();float[] out=new float[SAMPLE_W*SAMPLE_H];
-        for(int y=0;y<SAMPLE_H;y++) for(int x=0;x<SAMPLE_W;x++) {
-            int sx=r.left+(int)((x+0.5)*r.width()/SAMPLE_W),sy=r.top+(int)((y+0.5)*r.height()/SAMPLE_H);
-            int index=sy*p.getRowStride()+sx*p.getPixelStride();
-            out[y*SAMPLE_W+x]=((buf.get(index)&255)*0.299f+(buf.get(index+1)&255)*0.587f+(buf.get(index+2)&255)*0.114f)/255f;
-        } return out;
+    public volatile int repeats=1,testDelay=6100;
+    public volatile boolean randomTest;
+    public synchronized boolean ready(){return a!=null && b!=null && roi!=null && template!=null && !targetPackage.isEmpty();}
+    public synchronized void invalidate(){a=null;b=null;roi=null;template=null;targetPackage="";}
+    public synchronized boolean geometry(int w,int h,int r){return width==w && height==h && rotation==r;}
+    public synchronized void setGeometry(int w,int h,int r){if(!geometry(w,h,r))invalidate();width=w;height=h;rotation=r;}
+    public static void sample(Image image,Rect rect,float[] out,int sw,int sh){
+        if(rect.left<0 || rect.top<0 || rect.right>image.getWidth() || rect.bottom>image.getHeight() || rect.width()<1 || rect.height()<1 || out.length!=sw*sh)throw new IllegalArgumentException("감지 영역이 화면 밖입니다");
+        Image.Plane p=image.getPlanes()[0];ByteBuffer buf=p.getBuffer();
+        for(int y=0;y<sh;y++)for(int x=0;x<sw;x++){
+            int sx=rect.left+(int)((x+.5)*rect.width()/sw),sy=rect.top+(int)((y+.5)*rect.height()/sh);
+            int offset=sy*p.getRowStride()+sx*p.getPixelStride();
+            out[y*sw+x]=((buf.get(offset)&255)*.299f+(buf.get(offset+1)&255)*.587f+(buf.get(offset+2)&255)*.114f)/255f;
+        }
     }
-    public synchronized String summary() { return "1번 위치: "+(a==null?"미설정":a)+"\n3번 위치: "+(b==null?"미설정":b)+"\n등록 영역: "+templates.keySet()+"\n대상: "+targetPackage; }
-    public synchronized void save(Context c) {
-        try {
-            JSONObject o=new JSONObject();o.put("width",width).put("height",height).put("rotation",rotation).put("package",targetPackage).put("repeats",repeats).put("timeout",timeoutSeconds).put("testDelay",testDelay);
+    public synchronized String setupSummary(){return "1번 위치: "+(a==null?"미설정":"설정됨")+"\n3번 위치: "+(b==null?"미설정":"설정됨")+"\n완료 표시 영역: "+(template==null?"미설정":"설정됨");}
+    public synchronized void save(Context c){
+        try{
+            JSONObject o=new JSONObject().put("version",2).put("width",width).put("height",height).put("rotation",rotation).put("package",targetPackage).put("repeats",repeats).put("testDelay",testDelay).put("randomTest",randomTest);
             if(a!=null)o.put("a",new JSONArray(new int[]{a.x,a.y}));if(b!=null)o.put("b",new JSONArray(new int[]{b.x,b.y}));
-            JSONObject ts=new JSONObject();for(var e:templates.entrySet()) {
-                Rect r=e.getValue().rect;JSONArray data=new JSONArray();for(float f:e.getValue().pixels)data.put(f);
-                ts.put(e.getKey(),new JSONObject().put("rect",new JSONArray(new int[]{r.left,r.top,r.right,r.bottom})).put("pixels",data));
-            }o.put("templates",ts);
-            android.util.AtomicFile file=new android.util.AtomicFile(new File(c.getFilesDir(),"profile.json"));
-            FileOutputStream stream=null;try{stream=file.startWrite();stream.write(o.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));file.finishWrite(stream);}catch(Exception ex){if(stream!=null)file.failWrite(stream);throw ex;}
-        }catch(Exception e){AppState.log("설정 저장 실패: "+e.getMessage());}
+            if(roi!=null && template!=null){o.put("roi",new JSONArray(new int[]{roi.left,roi.top,roi.right,roi.bottom}));JSONArray data=new JSONArray();for(float v:template)data.put(v);o.put("template",data);}
+            android.util.AtomicFile f=new android.util.AtomicFile(new File(c.getFilesDir(),"profile.json"));FileOutputStream out=null;
+            try{out=f.startWrite();out.write(o.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));f.finishWrite(out);}catch(Exception ex){if(out!=null)f.failWrite(out);throw ex;}
+        }catch(Exception ex){AppState.log("설정 저장 실패: "+ex.getMessage());}
     }
-    public synchronized void load(Context c) {
+    public synchronized void load(Context c){
         File f=new File(c.getFilesDir(),"profile.json");if(!f.exists())return;
-        try(FileInputStream in=new FileInputStream(f)) {
+        try(FileInputStream in=new FileInputStream(f)){
             JSONObject o=new JSONObject(new String(in.readAllBytes(),java.nio.charset.StandardCharsets.UTF_8));
-            width=o.getInt("width");height=o.getInt("height");rotation=o.optInt("rotation");targetPackage=o.getString("package");repeats=o.getInt("repeats");timeoutSeconds=o.getInt("timeout");testDelay=o.optInt("testDelay",3000);
+            if(o.optInt("version")!=2){invalidate();return;}
+            width=o.getInt("width");height=o.getInt("height");rotation=o.getInt("rotation");targetPackage=o.optString("package");repeats=o.optInt("repeats",1);testDelay=o.optInt("testDelay",6100);randomTest=o.optBoolean("randomTest");
             JSONArray p=o.optJSONArray("a");if(p!=null)a=new Point(p.getInt(0),p.getInt(1));p=o.optJSONArray("b");if(p!=null)b=new Point(p.getInt(0),p.getInt(1));
-            JSONObject ts=o.getJSONObject("templates");for(Iterator<String> it=ts.keys();it.hasNext();) {
-                String key=it.next();JSONObject t=ts.getJSONObject(key);JSONArray r=t.getJSONArray("rect"),data=t.getJSONArray("pixels");
-                if(data.length()!=SAMPLE_W*SAMPLE_H)continue;float[] values=new float[data.length()];for(int i=0;i<values.length;i++)values[i]=(float)data.getDouble(i);
-                templates.put(key,new Template(new Rect(r.getInt(0),r.getInt(1),r.getInt(2),r.getInt(3)),values));
-            }
-        }catch(Exception ex){templates.clear();AppState.log("설정을 다시 등록하세요: "+ex.getMessage());}
+            JSONArray r=o.optJSONArray("roi"),data=o.optJSONArray("template");
+            if(r!=null && data!=null && data.length()==SAMPLE_W*SAMPLE_H){roi=new Rect(r.getInt(0),r.getInt(1),r.getInt(2),r.getInt(3));template=new float[data.length()];for(int i=0;i<template.length;i++)template[i]=(float)data.getDouble(i);}
+        }catch(Exception ex){invalidate();AppState.log("설정을 다시 지정하세요");}
     }
 }

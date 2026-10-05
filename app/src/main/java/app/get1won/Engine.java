@@ -1,98 +1,94 @@
 package app.get1won;
 
-/** All transitions and effects share this monitor. No queued clicks or delayed BACKs. */
+/** Serialized frame -> state -> platform effect. No delayed automation actions. */
 public final class Engine {
-    public enum State { IDLE, WAIT_HOME, STEP_1_TAP_A, WAIT_DETAIL, WAIT_REWARD,
-        STEP_2_BACK, WAIT_HOME_AFTER_STEP2, STEP_3_TAP_B, WAIT_SCREEN_AFTER_STEP3,
-        STEP_4_BACK, WAIT_HOME_AFTER_STEP4, NEXT_CYCLE, PAUSED, ERROR }
-    public interface Port { boolean act(int step, long epoch); void log(String message); }
-    public record Frame(long epoch, long time, boolean home, boolean detail,
-                        boolean reward, boolean waiting, boolean screenB) {}
-    public volatile State state = State.IDLE;
-    public volatile long epoch, cycleId, completed, rewardDetections, errors;
-    public final long[] actions = new long[4];
-    public String reason = "준비";
+    public enum State { IDLE, STEP1_TAP, WAIT_COMPLETION, STEP2_BACK,
+        WAIT_STABLE_AFTER_STEP2, STEP3_TAP, WAIT_STABLE_AFTER_STEP3,
+        STEP4_BACK, WAIT_STABLE_AFTER_STEP4, NEXT_CYCLE, PAUSED, ERROR }
+    public interface Port { boolean act(int step, long generation); void log(String message); }
+    public record Frame(long generation, long time, boolean completion, boolean waiting, float[] screen) {}
+    public volatile State state=State.IDLE;
+    public volatile long generation, cycleId, completed, detections, errors;
+    public final long[] actions=new long[4];
+    public volatile String reason="준비";
     private final Port port;
-    private long entered, watermark, stableSince = -1;
-    private long timeout = 15_000_000_000L;
-    private int limit = 1, mask;
+    private final ScreenStability stability=new ScreenStability();
+    private long entered,watermark,lastFrame;
+    private int limit,mask;
     private State resumeState;
-    public Engine(Port port) { this.port = port; }
-    public synchronized boolean active() { return state != State.IDLE && state != State.PAUSED && state != State.ERROR; }
-    public synchronized long epoch() { return epoch; }
-    public synchronized void start(long now, int repeats, int timeoutSeconds) {
-        if (active()) return;
-        epoch++; completed=0; cycleId++; mask=0;
-        limit=repeats; timeout=timeoutSeconds==0 ? 0 : timeoutSeconds*1_000_000_000L;
-        watermark=now; change(State.WAIT_HOME,now);
+    public Engine(Port port){this.port=port;}
+    public synchronized boolean active(){return state!=State.IDLE && state!=State.PAUSED && state!=State.ERROR;}
+    public synchronized long generation(){return generation;}
+    public synchronized void start(long now,int repeats){
+        generation++;cycleId++;completed=0;mask=0;limit=repeats;resumeState=null;
+        watermark=lastFrame=now;stability.clear();change(State.STEP1_TAP,now);
     }
-    public synchronized void pause(String why) {
-        if (state==State.PAUSED || state==State.IDLE || state==State.ERROR) return;
-        resumeState=state; epoch++; state=State.PAUSED; reason=why; stableSince=-1; port.log("일시정지: "+why);
+    public synchronized void pause(String why){
+        generation++;
+        if(active()){resumeState=state;state=State.PAUSED;}
+        stability.resetQuiet();reason=why;port.log("PAUSE "+why);
     }
-    public synchronized void resume(long now) {
+    public synchronized void resume(long now){
         if(state!=State.PAUSED || resumeState==null)return;
-        epoch++; watermark=now; change(resumeState,now);
+        generation++;watermark=lastFrame=now;stability.resetQuiet();change(resumeState,now);
     }
-    public synchronized void stop() {
-        epoch++; state=State.IDLE; resumeState=null; stableSince=-1; reason="중지"; port.log("중지");
+    public synchronized void stop(){generation++;state=State.IDLE;resumeState=null;stability.clear();reason="중지";port.log("STOP");}
+    public synchronized void settingsChanged(){stop();reason="설정 변경 — 시작을 다시 누르세요";}
+    public synchronized void fail(String why){generation++;errors++;state=State.ERROR;resumeState=null;stability.clear();reason=why;port.log("ERROR "+why);}
+    public synchronized boolean transitionState(){return state==State.WAIT_STABLE_AFTER_STEP2 || state==State.WAIT_STABLE_AFTER_STEP3 || state==State.WAIT_STABLE_AFTER_STEP4;}
+    public synchronized void tick(long now){
+        if(!active())return;
+        long deadline=transitionState()?2_000_000_000L:30_000_000_000L;
+        if(now-entered>=deadline){errors++;pause(transitionState()?"화면 전환 확인 시간 초과":"완료 표시 대기 시간 초과");}
     }
-    public synchronized void fail(String why) {
-        errors++; epoch++; state=State.ERROR; reason=why; stableSince=-1; port.log("오류: "+why);
-    }
-    public synchronized void tick(long now) {
-        if(active() && timeout>0 && now-entered>=timeout) { errors++; pause("시간 초과 — 화면을 확인한 후 재개하세요"); }
-    }
-    private void change(State next,long now) {
-        state=next; entered=now; stableSince=-1; reason=next.name(); port.log("사이클 "+cycleId+" "+next);
-    }
-    private boolean stable(boolean condition, long now, long duration) {
-        if(!condition){stableSince=-1;return false;}
-        if(stableSince<0)stableSince=now;
-        return now-stableSince>=duration;
-    }
-    private void act(int step,State action,State after,long now) {
+    private void change(State next,long now){state=next;entered=now;reason=label(next);port.log("cycle "+cycleId+" "+next);}
+    private void act(int step,State action,State after,Frame frame){
         int bit=1<<(step-1);
-        if((mask&bit)!=0){fail("중복 동작 차단: "+step);return;}
-        mask|=bit; change(action,now);
-        // Commit the state before the platform call. Failure never retries an action.
-        if(!port.act(step,epoch)){fail(step+"번 실행 실패");return;}
-        actions[step-1]++; watermark=now; change(after,now);
+        if((mask&bit)!=0){fail("중복 동작 차단");return;}
+        mask|=bit;change(action,frame.time);
+        if(!port.act(step,generation)){fail(step+"번 요청 실패");return;}
+        actions[step-1]++;watermark=frame.time;
+        if(step>=2)stability.begin(frame.screen);
+        change(after,frame.time);
     }
-    public synchronized void frame(Frame f) {
-        if(!active() || f.epoch!=epoch || f.time<=watermark)return;
-        // A timeout can only pause; it cannot authorize any action.
-        tick(f.time); if(!active())return;
-        boolean home=f.home && !f.detail && !f.screenB && !f.reward && !f.waiting;
-        switch(state) {
-            case WAIT_HOME, WAIT_HOME_AFTER_STEP4 -> {
-                if(stable(home,f.time,350_000_000L)) {
-                    if(state==State.WAIT_HOME_AFTER_STEP4) {
-                        completed++; port.log("사이클 "+cycleId+" 완료");
-                        if(limit>0 && completed>=limit){stop();return;}
-                        change(State.NEXT_CYCLE,f.time); cycleId++; mask=0;
-                    }
-                    act(1,State.STEP_1_TAP_A,State.WAIT_DETAIL,f.time);
+    public synchronized void frame(Frame f){
+        if(!active() || f.generation!=generation || f.time<=watermark || f.time<=lastFrame)return;
+        lastFrame=f.time;tick(f.time);if(!active())return;
+        switch(state){
+            case STEP1_TAP -> {if(!f.completion && !f.waiting)act(1,State.STEP1_TAP,State.WAIT_COMPLETION,f);}
+            case WAIT_COMPLETION -> {
+                if(f.completion && !f.waiting){
+                    detections++;
+                    // First valid positive frame invokes BACK in this same call stack.
+                    act(2,State.STEP2_BACK,State.WAIT_STABLE_AFTER_STEP2,f);
                 }
             }
-            case WAIT_DETAIL, WAIT_REWARD -> {
-                if(f.home || f.screenB)return;
-                if(state==State.WAIT_DETAIL && f.detail)change(State.WAIT_REWARD,f.time);
-                if(state==State.WAIT_REWARD && f.detail && f.reward && !f.waiting) {
-                    rewardDetections++; port.log("1원 받았어요 감지");
-                    // First valid frame: synchronous call, NO delay and NO multi-frame vote.
-                    act(2,State.STEP_2_BACK,State.WAIT_HOME_AFTER_STEP2,f.time);
+            case WAIT_STABLE_AFTER_STEP2, WAIT_STABLE_AFTER_STEP3, WAIT_STABLE_AFTER_STEP4 -> {
+                if(f.waiting || f.completion){stability.resetQuiet();return;}
+                if(!stability.accept(f.screen,f.time))return;
+                port.log("화면 변화 및 250ms 안정 확인");
+                if(state==State.WAIT_STABLE_AFTER_STEP2)act(3,State.STEP3_TAP,State.WAIT_STABLE_AFTER_STEP3,f);
+                else if(state==State.WAIT_STABLE_AFTER_STEP3)act(4,State.STEP4_BACK,State.WAIT_STABLE_AFTER_STEP4,f);
+                else {
+                    completed++;port.log("cycle "+cycleId+" 완료");
+                    if(limit>0 && completed>=limit){stop();return;}
+                    change(State.NEXT_CYCLE,f.time);cycleId++;mask=0;
+                    act(1,State.STEP1_TAP,State.WAIT_COMPLETION,f);
                 }
-            }
-            case WAIT_HOME_AFTER_STEP2 -> {
-                if(stable(home,f.time,350_000_000L))act(3,State.STEP_3_TAP_B,State.WAIT_SCREEN_AFTER_STEP3,f.time);
-            }
-            case WAIT_SCREEN_AFTER_STEP3 -> {
-                // Step 4 has its own explicit B-screen gate, never a timeout fallback.
-                if(stable(f.screenB && !f.home && !f.detail && !f.waiting && !f.reward,f.time,500_000_000L))
-                    act(4,State.STEP_4_BACK,State.WAIT_HOME_AFTER_STEP4,f.time);
             }
             default -> { }
         }
     }
+    public static String label(State s){return switch(s){
+        case IDLE -> "준비 / 중지";
+        case STEP1_TAP -> "1번 위치 누르는 중";
+        case WAIT_COMPLETION -> "완료 표시 기다리는 중";
+        case STEP2_BACK -> "2번 뒤로가기";
+        case WAIT_STABLE_AFTER_STEP2,WAIT_STABLE_AFTER_STEP3,WAIT_STABLE_AFTER_STEP4 -> "화면 전환 기다리는 중";
+        case STEP3_TAP -> "3번 위치 누르는 중";
+        case STEP4_BACK -> "4번 뒤로가기";
+        case NEXT_CYCLE -> "다음 반복 준비";
+        case PAUSED -> "일시정지";
+        case ERROR -> "화면을 확인해 주세요";
+    };}
 }
