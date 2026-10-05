@@ -73,29 +73,34 @@ public final class CaptureService extends Service {
         try(Image image=source.acquireLatestImage()){
             if(image==null)return;long stamp=image.getTimestamp(),now=System.nanoTime();
             if(stamp<=0 || stamp>now+50_000_000L || now-stamp>250_000_000L || stamp<=lastActionNanos)return;
+            AutomationService service=AppState.accessibility;
+            if(service==null || (!AppState.engine.active() && pending==null))return;
+            // Node queries can require a main-thread reply. Keep them outside both locks.
+            boolean target=service.targetVisible();
+            boolean waiting=target && pending==null && service.waitTextVisible();
+            long checkedAt=System.nanoTime();
+            if(checkedAt-stamp>250_000_000L)return;
             synchronized(AppState.engine){
                 if(generation!=AppState.engine.generation())return;
-                AutomationService service=AppState.accessibility;
-                if(service==null)return;
+                service.frameEvidence(generation,target,waiting,checkedAt);
                 Pending task=pending;
                 if(task!=null){
                     if(task.generation!=generation){pending=null;return;}
                     if(stamp<=task.after)return;
                     pending=null;
-                    if(!service.targetVisible()){AppState.notice="지정한 앱 화면에서 영역을 선택하세요";service.selectionSaved(generation);return;}
+                    if(!target){AppState.notice="지정한 앱 화면에서 영역을 선택하세요";service.selectionSaved(generation);return;}
                     Profile.sample(image,task.roi,roiBuffer,Profile.SAMPLE_W,Profile.SAMPLE_H);
                     if(Matcher.contrast(roiBuffer)<.025){AppState.notice="단색 영역은 사용할 수 없습니다. 완료 글자 전체를 지정하세요";service.selectionSaved(generation);return;}
                     synchronized(AppState.profile){Profile p=AppState.profile;p.setGeometry(width,height,rotation);p.roi=new Rect(task.roi);p.template=roiBuffer.clone();p.save(this);}
                     AppState.notice="완료 표시 영역 저장 완료";service.selectionSaved(generation);return;
                 }
                 if(!AppState.engine.active())return;
-                if(!service.targetVisible()){AppState.engine.pause("지정한 앱 화면을 벗어났습니다");return;}
+                if(!target){AppState.engine.pause("지정한 앱 화면을 벗어났습니다");return;}
                 Profile p=AppState.profile;
                 synchronized(p){
                     if(!p.ready() || !p.geometry(width,height,rotation)){AppState.engine.pause("세 항목을 다시 지정하세요");return;}
                     Profile.sample(image,p.roi,roiBuffer,Profile.SAMPLE_W,Profile.SAMPLE_H);
                     boolean completion=Matcher.score(roiBuffer,p.template,Profile.SAMPLE_W)>=.96;
-                    boolean waiting=service.waitTextVisible();
                     sampleScreen(image,p.roi,service.overlayBounds());
                     AppState.engine.frame(new Engine.Frame(generation,stamp,completion,waiting,screenBuffer));
                 }

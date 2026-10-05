@@ -13,6 +13,8 @@ public final class AutomationService extends AccessibilityService {
     private WindowManager wm;private LinearLayout panel;private TextView status;private Button toggle;
     private View picker;private boolean bottom=true;private WindowManager.LayoutParams params;
     private volatile Rect bounds;
+    private volatile long frameGeneration=-1,frameCheckedAt;
+    private volatile boolean frameTarget,frameWaiting=true;
     private String pendingSelection;private boolean pendingStart;private long pendingGeneration,pendingUntil;
     @Override protected void onServiceConnected(){AppState.initialize(this);AppState.accessibility=this;wm=getSystemService(WindowManager.class);createPanel();ui.post(refresh);}
     @Override public void onAccessibilityEvent(AccessibilityEvent event){if(pendingSelection!=null || pendingStart)ui.post(this::handlePending);}
@@ -20,6 +22,7 @@ public final class AutomationService extends AccessibilityService {
     @Override public void onDestroy(){AppState.engine.pause("접근성 연결 종료");AppState.accessibility=null;ui.removeCallbacksAndMessages(null);if(picker!=null)wm.removeView(picker);if(panel!=null)wm.removeView(panel);super.onDestroy();}
     public boolean targetVisible(){
         if(getSystemService(KeyguardManager.class).isKeyguardLocked())return false;
+        if(getPackageName().equals(AppState.profile.targetPackage))return TestActivity.visible;
         AccessibilityNodeInfo root=getRootInActiveWindow();String pkg=root==null?"":String.valueOf(root.getPackageName());
         return !pkg.isEmpty() && pkg.equals(AppState.profile.targetPackage) && (!pkg.equals(getPackageName()) || TestActivity.visible);
     }
@@ -31,15 +34,18 @@ public final class AutomationService extends AccessibilityService {
         }return false;
     }
     public boolean execute(int step,long generation){
-        if(generation!=AppState.engine.generation() || !AppState.engine.active() || !targetVisible())return false;
+        // Accessibility node queries may synchronously ask an app's UI thread. Never do
+        // that while holding the engine lock: its UI also uses that lock for stop/pause.
+        if(generation!=AppState.engine.generation() || !AppState.engine.active() || frameGeneration!=generation || !frameTarget || System.nanoTime()-frameCheckedAt>250_000_000L)return false;
         CaptureService.lastActionNanos=System.nanoTime();
-        if(step==2 || step==4){if(waitTextVisible())return false;return performGlobalAction(GLOBAL_ACTION_BACK);}
+        if(step==2 || step==4){if(frameWaiting)return false;return performGlobalAction(GLOBAL_ACTION_BACK);}
         Point p=step==1?AppState.profile.a:AppState.profile.b;if(p==null)return false;
         Path path=new Path();path.moveTo(p.x,p.y);
         return dispatchGesture(new GestureDescription.Builder().addStroke(new GestureDescription.StrokeDescription(path,0,1)).build(),new GestureResultCallback(){
             @Override public void onCancelled(GestureDescription gesture){synchronized(AppState.engine){if(AppState.engine.generation()==generation && AppState.engine.active())AppState.engine.fail("터치가 취소되었습니다");}}
         },ui);
     }
+    void frameEvidence(long generation,boolean target,boolean waiting,long checkedAt){frameTarget=target;frameWaiting=waiting;frameCheckedAt=checkedAt;frameGeneration=generation;}
     private int dp(int value){return Math.round(value*getResources().getDisplayMetrics().density);}
     private Button button(String label,Runnable action){Button b=new Button(this);b.setText(label);b.setTextSize(11);b.setMinWidth(0);b.setMinimumWidth(0);b.setPadding(dp(5),0,dp(5),0);b.setOnClickListener(v->action.run());return b;}
     @android.annotation.SuppressLint("RtlHardcoded") // Raw display coordinates must always use the physical left edge.

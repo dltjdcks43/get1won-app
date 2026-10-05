@@ -43,7 +43,7 @@ public class DeviceFlowTest {
         while(SystemClock.uptimeMillis()<deadline && AppState.engine.active()){
             SystemClock.sleep(200);
         }
-        assertEquals(AppState.logs(),50,AppState.engine.completed);
+        assertEquals(diagnostic(),50,AppState.engine.completed);
         assertEquals(Engine.State.IDLE,AppState.engine.state);
         final int[][] counters={null};i.runOnMainSync(()->counters[0]=activity.counters());
         assertArrayEquals(new int[]{50,0,0,0,0,0,0},counters[0]);
