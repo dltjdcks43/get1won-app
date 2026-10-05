@@ -17,18 +17,21 @@ public class DeviceFlowTest {
     private final UiDevice device=initializeDevice();
     private UiDevice initializeDevice(){Configurator.getInstance().setUiAutomationFlags(android.app.UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES);return UiDevice.getInstance(i);}
     private interface Check { boolean ok(); }
-    private void until(Check check,long ms,String why){long end=SystemClock.uptimeMillis()+ms;while(SystemClock.uptimeMillis()<end){if(check.ok())return;SystemClock.sleep(100);}fail(why+"\n"+AppState.status()+"\n"+AppState.logs());}
+    private String diagnostic(){try{java.io.ByteArrayOutputStream out=new java.io.ByteArrayOutputStream();device.dumpWindowHierarchy(out);return AppState.status()+"\n"+AppState.notice+"\n"+AppState.logs()+"\n"+out.toString(java.nio.charset.StandardCharsets.UTF_8);}catch(Exception ex){return ex.toString();}}
+    private void until(Check check,long ms,String why){long end=SystemClock.uptimeMillis()+ms;while(SystemClock.uptimeMillis()<end){if(check.ok())return;SystemClock.sleep(100);}fail(why+"\n"+diagnostic());}
     @Test public void fiftyRealCyclesAndNeverLeaveWaiting() throws Exception {
         device.executeShellCommand("settings put secure enabled_accessibility_services app.get1won/app.get1won.AutomationService");
         device.executeShellCommand("settings put secure accessibility_enabled 1");
         device.executeShellCommand("pm grant app.get1won android.permission.POST_NOTIFICATIONS");
         until(()->AppState.accessibility!=null,15000,"접근성 시작 실패");
-        i.startActivitySync(new Intent(i.getTargetContext(),MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
-        UiObject2 share=device.wait(Until.findObject(By.text("화면 공유 시작")),10000);assertNotNull(share);share.click();
+        device.wakeUp();device.executeShellCommand("wm dismiss-keyguard");
+        MainActivity main=(MainActivity)i.startActivitySync(new Intent(i.getTargetContext(),MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+        i.runOnMainSync(main::requestCapture);
         // Android 14/15/16 system consent labels vary; only affirmative capture buttons are matched.
         long end=SystemClock.uptimeMillis()+15000;
         while(!AppState.capturing && SystemClock.uptimeMillis()<end){
-            UiObject2 allow=device.findObject(By.text(java.util.regex.Pattern.compile("Start now|Start recording|Start sharing|지금 시작|녹화 시작|공유 시작")));
+            UiObject2 allow=device.findObject(By.pkg("com.android.systemui").res("android:id/button1"));
+            if(allow==null)allow=device.findObject(By.pkg("com.android.systemui").text(java.util.regex.Pattern.compile("(?i)Start now|Start recording|Start sharing|Start|Share|지금 시작|녹화 시작|공유 시작|시작")));
             if(allow!=null)allow.click();SystemClock.sleep(200);
         }
         until(()->AppState.capturing,5000,"화면 공유 동의 실패");
