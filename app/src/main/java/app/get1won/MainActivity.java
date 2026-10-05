@@ -18,9 +18,9 @@ public final class MainActivity extends Activity {
         TextView help=new TextView(this);help.setText("보상 문구가 보이는 첫 유효 프레임에서 뒤로갑니다. 시간 초과는 일시정지입니다.\n접근성 → 화면 공유 → 대상 앱 → 플로팅창 ‘영역/위치’에서 기준 등록 → HOME에서 시작\n대상 앱의 글꼴·확대율·방향을 바꾸면 좌표와 영역을 다시 등록하세요.");content.addView(help);
         status=new TextView(this);content.addView(status);
         button("접근성 설정",()->startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)));
+        button("알림 허용",()->requestPermissions(new String[]{android.Manifest.permission.POST_NOTIFICATIONS},4));
         button("화면 공유 시작",()->{
             if(AppState.capturing)return;
-            requestPermissions(new String[]{android.Manifest.permission.POST_NOTIFICATIONS},4);
             MediaProjectionManager manager=getSystemService(MediaProjectionManager.class);
             startActivityForResult(manager.createScreenCaptureIntent(MediaProjectionConfig.createConfigForDefaultDisplay()),42);
         });

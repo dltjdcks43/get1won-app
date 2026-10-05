@@ -58,4 +58,3 @@ CI는 push/pull_request/workflow_dispatch에서 unit test, lint, assembleDebug�
 - `TestActivity.java`: 실제 화면 기반 시험 모드
 
 공식 기준: [MediaProjection](https://developer.android.com/media/grow/media-projection), [AccessibilityService](https://developer.android.com/reference/android/accessibilityservice/AccessibilityService), [AGP 8.10/API 36](https://developer.android.com/build/releases/agp-8-10-0-release-notes).
-

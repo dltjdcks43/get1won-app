@@ -8,8 +8,8 @@ public final class Engine {
     public interface Port { boolean act(int step, long epoch); void log(String message); }
     public record Frame(long epoch, long time, boolean home, boolean detail,
                         boolean reward, boolean waiting, boolean screenB) {}
-    public State state = State.IDLE;
-    public long epoch, cycleId, completed, rewardDetections, errors;
+    public volatile State state = State.IDLE;
+    public volatile long epoch, cycleId, completed, rewardDetections, errors;
     public final long[] actions = new long[4];
     public String reason = "준비";
     private final Port port;

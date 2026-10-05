@@ -14,7 +14,7 @@ public final class Profile {
     public Point a,b;
     public int width,height,rotation;
     public String targetPackage="";
-    public int repeats=1,timeoutSeconds=15,testDelay=3000;
+    public volatile int repeats=1,timeoutSeconds=15,testDelay=3000;
     public final Map<String,Template> templates=new HashMap<>();
     public record Template(Rect rect,float[] pixels) {}
     public synchronized boolean ready(){return a!=null && b!=null && !targetPackage.isEmpty() && templates.keySet().containsAll(List.of("reward","waiting","home","screenB"));}

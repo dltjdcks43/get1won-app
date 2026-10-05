@@ -41,7 +41,7 @@ public final class AutomationService extends AccessibilityService {
             @Override public void onCancelled(GestureDescription gesture){synchronized(AppState.engine){if(AppState.engine.epoch()==epoch && AppState.engine.active())AppState.engine.fail("터치가 취소되었습니다");}}
         },main);
     }
-    private Button button(String text,Runnable action){Button b=new Button(this);b.setText(text);b.setTextSize(11);b.setMinHeight(0);b.setMinimumHeight(0);b.setPadding(6,2,6,2);b.setOnClickListener(v->action.run());return b;}
+    private Button button(String text,Runnable action){Button b=new Button(this);b.setText(text);b.setTextSize(11);b.setMinHeight(0);b.setMinimumHeight(0);b.setMinWidth(0);b.setMinimumWidth(0);b.setPadding(8,2,8,2);b.setOnClickListener(v->action.run());return b;}
     private void showPanel() {
         panel=new LinearLayout(this);panel.setOrientation(LinearLayout.VERTICAL);panel.setPadding(6,6,6,6);panel.setBackgroundColor(0xEEFFFFFF);
         status=new TextView(this);status.setTextColor(Color.BLACK);status.setTextSize(11);panel.addView(status);
@@ -115,5 +115,5 @@ public final class AutomationService extends AccessibilityService {
         if(!placePanel()){AppState.log("시작 불가: 플로팅창과 좌표/영역이 겹칩니다");return;}
         AppState.engine.start(System.nanoTime(),AppState.profile.repeats,AppState.profile.timeoutSeconds);
     }
-    private final Runnable refresh=new Runnable(){@Override public void run(){if(panel==null)return; synchronized(AppState.engine){status.setText("1원 받기  "+(AppState.engine.active()?"● 실행 중":"● 대기")+"\n"+AppState.engine.state+"\n반복: "+AppState.engine.completed+"회\n"+(selectKey==null?AppState.engine.reason:"지정 대기: "+selectKey));}if(!placePanel() && AppState.engine.active())AppState.engine.pause("플로팅창이 감지 영역을 가립니다");main.postDelayed(this,350);}};
+    private final Runnable refresh=new Runnable(){@Override public void run(){if(panel==null)return; synchronized(AppState.engine){status.setText("1원 받기  "+(AppState.engine.active()?"● 실행 중":"● 대기")+"\n"+AppState.engine.state+"\n반복: "+AppState.engine.completed+"회\n"+(selectKey==null?AppState.engine.reason:"지정 대기: "+selectKey));}if(!placePanel() && AppState.engine.active())AppState.engine.pause("플로팅창이 감지 영역을 가립니다");AppState.flushLogs(AutomationService.this);main.postDelayed(this,350);}};
 }

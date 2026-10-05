@@ -14,7 +14,8 @@ import static org.junit.Assert.*;
 @RunWith(AndroidJUnit4.class)
 public class DeviceFlowTest {
     private final Instrumentation i=InstrumentationRegistry.getInstrumentation();
-    private final UiDevice device=UiDevice.getInstance(i);
+    private final UiDevice device=initializeDevice();
+    private UiDevice initializeDevice(){i.getUiAutomation(android.app.UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES);return UiDevice.getInstance(i);}
     private interface Check { boolean ok(); }
     private void until(Check check,long ms,String why){long end=SystemClock.uptimeMillis()+ms;while(SystemClock.uptimeMillis()<end){if(check.ok())return;SystemClock.sleep(100);}fail(why+"\n"+AppState.status()+"\n"+AppState.logs());}
     @Test public void fiftyRealCyclesAndNeverLeaveWaiting() throws Exception {

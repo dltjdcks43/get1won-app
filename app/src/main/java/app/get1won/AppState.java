@@ -8,12 +8,15 @@ public final class AppState {
     public static volatile AutomationService accessibility;
     public static volatile boolean capturing;
     private static boolean loaded;
+    private static long lastFlush;private static boolean dirty;
     private static final ArrayDeque<String> logs=new ArrayDeque<>();
-    public static synchronized void initialize(android.content.Context c){if(!loaded){loaded=true;profile.load(c);}}
+    public static synchronized void initialize(android.content.Context c){if(!loaded){loaded=true;try{java.io.File f=new java.io.File(c.getFilesDir(),"recent.log");if(f.exists()){for(String s:java.nio.file.Files.readAllLines(f.toPath())){logs.addLast(s);while(logs.size()>200)logs.removeFirst();}}}catch(Exception ignored){}profile.load(c);}}
     public static synchronized void log(String message) {
         logs.addLast(new SimpleDateFormat("HH:mm:ss.SSS",Locale.KOREA).format(new Date())+" "+message);
         while(logs.size()>200)logs.removeFirst();
+        dirty=true;
     }
+    public static synchronized void flushLogs(android.content.Context c){long now=android.os.SystemClock.uptimeMillis();if(!dirty || now-lastFlush<1000)return;lastFlush=now;try{java.nio.file.Files.write(new java.io.File(c.getFilesDir(),"recent.log").toPath(),String.join("\n",logs).getBytes(java.nio.charset.StandardCharsets.UTF_8));dirty=false;}catch(Exception ignored){}}
     public static synchronized String logs(){return String.join("\n",logs);}
     public static final Engine engine=new Engine(new Engine.Port() {
         @Override public boolean act(int step,long epoch) {

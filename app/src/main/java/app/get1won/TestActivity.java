@@ -10,7 +10,7 @@ import android.widget.*;
 public final class TestActivity extends Activity {
     private final Handler handler=new Handler(Looper.getMainLooper());
     private android.widget.FrameLayout root;private TextView marker,reward,stats;private Button a,b;
-    private String screen="home";private int expected=1;private boolean received,calibrating;
+    private String screen="home";private int expected=1;private boolean received;private volatile boolean calibrating;
     private int normal,wrongA,earlyBack,missingB,missing4,duplicates,orderErrors;
     private final android.window.OnBackInvokedCallback back=this::back;
     private int dp(int x){return Math.round(x*getResources().getDisplayMetrics().density);}
