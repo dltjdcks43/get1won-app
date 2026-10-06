@@ -23,7 +23,7 @@ public final class AutomationService extends AccessibilityService {
     private long scannedRevision=-1,scannedAt; private int screenW,screenH,rotation;
     private View pulse; private boolean pulseLight; private Rect waitingRegion; private long waitingCycle=-1; private int ocrAttempts;
     record Snapshot(long generation,long time,long revision,int windowId,String pkg,Semantic.Scene scene,Map<Integer,AccessibilityNodeInfo> handles){}
-    record OcrRequest(long generation,long cycle,Engine.State state,long revision,int windowId,String pkg,long after,Rect region){}
+    record OcrRequest(long generation,long cycle,Engine.State state,long revision,int windowId,String pkg,long after,Rect region,int attempt){}
     private volatile OcrRequest wanted;
     private OcrRequest lastRequested;
     private volatile boolean panelSessionActive;
@@ -121,24 +121,25 @@ public final class AutomationService extends AccessibilityService {
     private boolean needsOcr(Semantic.Found f){return switch(AppState.engine.state){
         case WAIT_HOME,WAIT_HOME_AFTER_POINTS->!f.home() || f.ad()==null;
         case WAIT_HOME_AFTER_REWARD->!f.home();
+        case OPEN_REWARD_AD->f.complete()==null && f.waiting()==null && (!f.home() || f.ad()==null);
         case WAIT_REWARD_COMPLETE->f.complete()==null && f.waiting()==null;
         case WAIT_POINTS_HISTORY->!f.history();default->false;
     };}
     private synchronized void requestOcr(Snapshot s,Semantic.Found f){
         if(!panelSessionActive || !AppState.capturing || !CaptureService.ready)return;
         OcrRequest previous=lastRequested;
-        if(previous!=null && previous.generation==s.generation && previous.cycle==AppState.engine.cycleId && previous.state==AppState.engine.state && previous.revision==s.revision && previous.windowId==s.windowId && previous.pkg.equals(s.pkg))return;
+        if(previous!=null && previous.generation==s.generation && previous.cycle==AppState.engine.cycleId && previous.state==AppState.engine.state && previous.revision==s.revision && previous.attempt==AppState.engine.adAttempts && previous.windowId==s.windowId && previous.pkg.equals(s.pkg))return;
         Rect region=rect(s.scene.screen());
         // A real waiting bubble supplies a dynamic crop. Otherwise analyze downsampled content.
         if(AppState.engine.state==Engine.State.WAIT_REWARD_COMPLETE && waitingRegion!=null && ++ocrAttempts%4!=0){
             region=new Rect(waitingRegion);int pad=Math.max(region.height(),dp(16));region.inset(-pad,-pad);if(!region.intersect(rect(s.scene.screen())))return;
         }
-        wanted=new OcrRequest(s.generation,AppState.engine.cycleId,AppState.engine.state,s.revision,s.windowId,s.pkg,s.time,region);lastRequested=wanted;
+        wanted=new OcrRequest(s.generation,AppState.engine.cycleId,AppState.engine.state,s.revision,s.windowId,s.pkg,s.time,region,AppState.engine.adAttempts);lastRequested=wanted;
     }
     public void acceptOcr(OcrRequest request,long stamp,List<Semantic.Node> text){
         if(worker==null)return;
         worker.post(()->{
-            if(!panelSessionActive || !AppState.capturing || request.generation!=AppState.engine.generation() || request.cycle!=AppState.engine.cycleId || request.state!=AppState.engine.state || request.revision!=revision.get() || System.nanoTime()-stamp>10_000_000_000L){if(diagnosticPending){diagnosticPending=false;wanted=null;analysis+="\n화면이 바뀌었어요. 다시 분석해주세요.";}return;}
+            if(!panelSessionActive || !AppState.capturing || request.generation!=AppState.engine.generation() || request.cycle!=AppState.engine.cycleId || request.state!=AppState.engine.state || request.attempt!=AppState.engine.adAttempts || request.revision!=revision.get() || System.nanoTime()-stamp>10_000_000_000L){if(diagnosticPending){diagnosticPending=false;wanted=null;analysis+="\n화면이 바뀌었어요. 다시 분석해주세요.";}return;}
             Snapshot fresh=read();if(fresh==null || !fresh.pkg.equals(request.pkg) || fresh.windowId!=request.windowId || fresh.revision!=request.revision)return;
             List<Semantic.Node> combined=new ArrayList<>(fresh.scene.nodes());int id=combined.size();
             for(Semantic.Node n:text)combined.add(new Semantic.Node(id++,-1,n.text(),n.box(),false,true,"OCR"));
@@ -154,7 +155,7 @@ public final class AutomationService extends AccessibilityService {
         updateAnalysis(s.scene);
         // Protect only currently relevant controls; on HOME the panel is moved clear of the next target.
         List<Rect> protect=new ArrayList<>();
-        Semantic.Node next=switch(AppState.engine.state){case WAIT_HOME,WAIT_HOME_AFTER_POINTS->f.ad();case WAIT_HOME_AFTER_REWARD->f.pointsTarget();case WAIT_REWARD_COMPLETE->f.complete()!=null?f.complete():f.waiting();default->null;};
+        Semantic.Node next=switch(AppState.engine.state){case WAIT_HOME,WAIT_HOME_AFTER_POINTS,OPEN_REWARD_AD->f.ad();case WAIT_HOME_AFTER_REWARD->f.pointsTarget();case WAIT_REWARD_COMPLETE->f.complete()!=null?f.complete():f.waiting();default->null;};
         if(next!=null)protect.add(rect(next.box()));protectedBounds=List.copyOf(protect);
         Rect overlay=panelBounds;
         if(next!=null && overlay!=null && Rect.intersects(overlay,rect(next.box()))){
@@ -178,14 +179,25 @@ public final class AutomationService extends AccessibilityService {
         if(effect.step()==2 || effect.step()==4)return performGlobalAction(GLOBAL_ACTION_BACK)?1:0;
         Semantic.Node target=effect.target();if(target==null)return 0;
         AccessibilityNodeInfo handle=s.handles.get(target.id());
-        if(handle!=null && handle.isClickable() && handle.performAction(AccessibilityNodeInfo.ACTION_CLICK))return 1;
+        int attempt=AppState.engine.adAttempts+1;
+        if(handle!=null && handle.isClickable() && (effect.step()!=1 || attempt==1)){
+            if(effect.step()==1)AppState.log("STEP1 target source="+target.source()+" text="+target.text()+" bounds="+target.box()+" method=ACTION_CLICK attempt="+attempt);
+            boolean accepted=handle.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+            if(effect.step()==1){AppState.log("STEP1 ACTION_CLICK "+(accepted?"accepted":"rejected"));return accepted?1:0;}
+            if(accepted)return 1;
+        }
         if(!AppState.engine.valid(effect) || s.revision!=revision.get())return -1;
         Rect area=rect(target.box());Rect overlay=panelBounds;
         if(area.isEmpty() || (overlay!=null && Rect.intersects(area,overlay)))return 0;
-        Path path=new Path();path.moveTo(area.exactCenterX(),area.exactCenterY());
-        return dispatchGesture(new GestureDescription.Builder().addStroke(new GestureDescription.StrokeDescription(path,0,1)).build(),new GestureResultCallback(){
-            @Override public void onCancelled(GestureDescription g){if(effect.generation()==AppState.engine.generation())AppState.engine.pause("터치가 취소됐어요. 다시 시작해주세요.");}
-        },ui)?1:0;
+        // Retry only within freshly observed content, never expand beyond its bounds.
+        float x=effect.step()==1 && attempt==3?area.left+area.width()*.65f:area.exactCenterX();
+        Path path=new Path();path.moveTo(x,area.exactCenterY());
+        if(effect.step()==1)AppState.log("STEP1 target source="+target.source()+" text="+target.text()+" bounds="+target.box()+" method=gesture attempt="+attempt+" point="+x+","+area.exactCenterY());
+        boolean accepted=dispatchGesture(new GestureDescription.Builder().addStroke(new GestureDescription.StrokeDescription(path,0,60)).build(),new GestureResultCallback(){
+            @Override public void onCancelled(GestureDescription g){if(effect.generation()==AppState.engine.generation()){if(effect.step()==1)AppState.log("STEP1 gesture cancelled attempt="+attempt);else AppState.engine.pause("터치가 취소됐어요. 다시 시작해주세요.");}}
+        },ui);
+        if(effect.step()==1)AppState.log("STEP1 gesture "+(accepted?"accepted":"rejected"));
+        return accepted?1:0;
     }
     private void updateAnalysis(Semantic.Scene scene){
         Semantic.Found f=Semantic.inspect(scene);

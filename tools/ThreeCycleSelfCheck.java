@@ -13,8 +13,12 @@ public class ThreeCycleSelfCheck {
   String[] anchors={"다시 구경하고 1원 받아요","여기서 혜택 구경하고 1원 받아요","여기서 구경하면 1원 받아요"};
   for(int cycle=0;cycle<3;cycle++){
    var home=inspect(node(1,"내 포인트",200,260,cycle==0,cycle==0?"Accessibility":"OCR"),node(2,anchors[cycle],800,880,false,"OCR"),node(3,"변하는 광고 상품 제목 "+cycle,920,1020,cycle==0,cycle==0?"Accessibility":"OCR"),node(4,"알림 동의하고 1원 받기",1500,1580,true,"Accessibility"));
-   deliver(frame(home),1,false);
+   var adRequest=frame(home);
+   if(cycle==0){engine.acknowledge(adRequest,true,time);time+=600_000_000L;adRequest=frame(home);if(engine.state!=Engine.State.OPEN_REWARD_AD || engine.actions[0]!=0)throw new AssertionError("HOME falsely confirmed");}
+   deliver(adRequest,1,false);
+   if(frame(home)!=null || engine.state!=Engine.State.OPEN_REWARD_AD)throw new AssertionError("HOME falsely confirmed");
    if(frame(inspect(node(10,"3초 구경해요",200,260,false,"OCR")))!=null)throw new AssertionError("early BACK");
+   if(engine.state!=Engine.State.WAIT_REWARD_COMPLETE || engine.actions[0]!=cycle+1)throw new AssertionError("unconfirmed ad");
    deliver(frame(inspect(node(11,"1원 받았어요",200,260,false,"OCR"))),2,true);
    deliver(frame(home),3,true);
    deliver(frame(inspect(node(12,"전체",200,260,false,"Accessibility"),node(13,"광고 보고 1원 받기",400,460,false,"Accessibility"))),4,true);

@@ -13,13 +13,14 @@ public final class Engine {
     public final long[] actions=new long[4];
     public volatile String reason="준비됐어요",targetPackage="";
     private final Port port; private long entered,watermark,lastFrame; private int limit,mask;
-    private Effect pending; private long decisionEntered;
+    private Effect pending; private long decisionEntered,adRequestedAt;
+    public volatile int adAttempts;private boolean adAccepted;
     public Engine(Port port){this.port=port;}
     public synchronized boolean active(){return state!=State.IDLE && state!=State.PAUSED && state!=State.ERROR;}
     public synchronized long generation(){return generation;}
     public synchronized void start(long now,int repeats,String pkg){
         generation++;cycleId++;completed=0;mask=0;pending=null;limit=repeats;targetPackage=pkg;
-        watermark=lastFrame=now;change(State.WAIT_HOME,now);
+        adAttempts=0;adAccepted=false;watermark=lastFrame=now;change(State.WAIT_HOME,now);
     }
     public synchronized void pause(String why){generation++;pending=null;state=State.PAUSED;reason=why;port.log("PAUSE "+why);}
     public synchronized void stop(){generation++;pending=null;state=State.IDLE;reason="준비됐어요";targetPackage="";port.log("STOP");}
@@ -28,7 +29,7 @@ public final class Engine {
     public synchronized void tick(long now){
         if(!active())return;
         long timeout=30_000_000_000L;
-        if(now-entered>=timeout){errors++;pause(state==State.WAIT_REWARD_COMPLETE?"완료 화면을 찾지 못했어요.":"포인트 화면을 찾지 못했어요. 처음 화면으로 돌아가 주세요.");}
+        if(now-entered>=timeout){errors++;pause(state==State.OPEN_REWARD_AD?"광고를 열지 못했어요. 다시 시작해주세요.":state==State.WAIT_REWARD_COMPLETE?"완료 화면을 찾지 못했어요.":"포인트 화면을 찾지 못했어요. 처음 화면으로 돌아가 주세요.");}
     }
     private void change(State next,long now){state=next;entered=now;reason=label(next);port.log("cycle "+cycleId+" "+next);}
     private Effect reserve(int step,State action,Frame f,Semantic.Node target){
@@ -39,12 +40,14 @@ public final class Engine {
     /** No platform request was issued: discard stale evidence and reobserve the same stage. */
     public synchronized void abandon(Effect e){
         if(!valid(e))return;pending=null;mask&=~(1<<(e.step-1));
-        state=switch(e.step){case 1->State.WAIT_HOME;case 2->State.WAIT_REWARD_COMPLETE;case 3->State.WAIT_HOME_AFTER_REWARD;default->State.WAIT_POINTS_HISTORY;};
+        state=switch(e.step){case 1->adAttempts>0?State.OPEN_REWARD_AD:State.WAIT_HOME;case 2->State.WAIT_REWARD_COMPLETE;case 3->State.WAIT_HOME_AFTER_REWARD;default->State.WAIT_POINTS_HISTORY;};
         entered=decisionEntered;reason=label(state);port.log("stale evidence discarded before step "+e.step);
     }
     public synchronized void acknowledge(Effect e,boolean success,long now){
         if(!valid(e))return;
-        pending=null;if(!success){fail("화면을 누르지 못했어요. 처음 화면에서 다시 시작해주세요.");return;}
+        pending=null;
+        if(e.step==1){adAttempts++;adAccepted|=success;adRequestedAt=now;watermark=now;port.log("STEP1 request "+(success?"accepted":"rejected")+" attempt="+adAttempts);return;}
+        if(!success){fail("화면을 누르지 못했어요. 처음 화면에서 다시 시작해주세요.");return;}
         actions[e.step-1]++;watermark=now;
         change(switch(e.step){case 1->State.WAIT_REWARD_COMPLETE;case 2->State.WAIT_HOME_AFTER_REWARD;case 3->State.WAIT_POINTS_HISTORY;default->State.WAIT_HOME_AFTER_POINTS;},now);
     }
@@ -59,6 +62,17 @@ public final class Engine {
             case WAIT_HOME -> {
                 if(!s.home()){if(f.definitive)pause("시작할 화면을 찾지 못했어요. 포인트 화면을 열고 다시 시작해주세요.");return null;}
                 return findAd(f);
+            }
+            case OPEN_REWARD_AD -> {
+                if(adAccepted && !s.home() && !s.history() && (s.waiting()!=null || s.complete()!=null)){
+                    actions[0]++;port.log("STEP1 screen transition confirmed attempt="+adAttempts);change(State.WAIT_REWARD_COMPLETE,f.time);
+                    if(s.complete()!=null && s.waiting()==null){detections++;return reserve(2,State.BACK_FROM_REWARD,f,null);}
+                }else if(s.home() && f.time-adRequestedAt>=500_000_000L){
+                    if(adAttempts>=3){pause("광고를 열지 못했어요. 다시 시작해주세요.");return null;}
+                    if(s.ad()==null)return null;
+                    port.log("STEP1 no transition, retry "+(adAttempts+1));mask|=1;
+                    pending=new Effect(1,generation,cycleId,f.time,s.ad());return pending;
+                }
             }
             case WAIT_REWARD_COMPLETE -> {
                 if(s.complete()!=null && s.waiting()==null && !s.history() && !s.home()){
@@ -84,7 +98,7 @@ public final class Engine {
         }
         return null;
     }
-    private Effect findAd(Frame f){change(State.FIND_REWARD_AD,f.time);if(f.found.ad()==null){pause("광고 버튼을 찾지 못했어요.");return null;}return reserve(1,State.OPEN_REWARD_AD,f,f.found.ad());}
+    private Effect findAd(Frame f){adAttempts=0;adAccepted=false;change(State.FIND_REWARD_AD,f.time);if(f.found.ad()==null){pause("광고 버튼을 찾지 못했어요.");return null;}return reserve(1,State.OPEN_REWARD_AD,f,f.found.ad());}
     public static String label(State s){return switch(s){
         case IDLE->"준비됐어요";case WAIT_REWARD_COMPLETE->"완료될 때까지 기다리고 있어요";
         case OPEN_REWARD_AD,FIND_REWARD_AD->"광고를 열고 있어요";
