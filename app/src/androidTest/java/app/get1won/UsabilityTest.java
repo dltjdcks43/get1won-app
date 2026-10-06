@@ -11,7 +11,6 @@ import androidx.test.ext.junit.runners.AndroidJUnit4;
 import androidx.test.uiautomator.*;
 import org.junit.Test;
 import org.junit.runner.RunWith;
-import java.io.File;
 import java.util.*;
 import static org.junit.Assert.*;
 
@@ -25,7 +24,7 @@ public class UsabilityTest {
     private void click(Activity a,String label){i.runOnMainSync(()->{Button b=find(a,label);assertNotNull(label,b);b.performClick();});}
     private MainActivity open(){return (MainActivity)i.startActivitySync(new Intent(i.getTargetContext(),MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_CLEAR_TASK));}
     private void checkLayout(View root){for(TextView t:texts(root)){if(t.getVisibility()!=View.VISIBLE || t.getText().length()==0)continue;assertTrue("unmeasured "+t.getText(),t.getWidth()>0);if(t.getLayout()!=null){assertTrue("vertical clip "+t.getText(),t.getLayout().getHeight()<=t.getHeight()-t.getCompoundPaddingTop()-t.getCompoundPaddingBottom());}if(t.getLayout()!=null)for(int line=0;line<t.getLayout().getLineCount();line++)assertEquals("clipped "+t.getText(),0,t.getLayout().getEllipsisCount(line));if(t instanceof Button){float dp=t.getResources().getDisplayMetrics().density;assertTrue("small target "+t.getText(),t.getHeight()>=48*dp);}}}
-    private void shot(UiDevice device,String name) throws java.io.IOException {File dir=new File(i.getTargetContext().getExternalFilesDir(null),"ux");assertTrue(dir.exists() || dir.mkdirs());File file=new File(dir,name+".png");assertTrue(device.takeScreenshot(file));device.executeShellCommand("mkdir -p /sdcard/Download/get1won-ux");device.executeShellCommand("cp '"+file.getAbsolutePath()+"' '/sdcard/Download/get1won-ux/"+name+".png'");}
+    private void shot(UiDevice device,String name) throws java.io.IOException {String path="/data/local/tmp/get1won-ux/"+name+".png";device.executeShellCommand("mkdir -p /data/local/tmp/get1won-ux");device.executeShellCommand("screencap -p '"+path+"'");assertEquals("screenshot "+name,"saved",device.executeShellCommand("test -s '"+path+"' && echo saved").trim());}
     @Test public void firstRunPermissionsPersistentStartAndLargeText() throws Exception {
         Configurator.getInstance().setUiAutomationFlags(UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES);UiDevice device=UiDevice.getInstance(i);device.wakeUp();device.executeShellCommand("wm dismiss-keyguard");
         try {
