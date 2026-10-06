@@ -18,8 +18,12 @@ public final class Profile {
     public String targetPackage="";
     public volatile int repeats=1,testDelay=6100;
     public volatile boolean randomTest;
-    public synchronized boolean ready(){return a!=null && b!=null && roi!=null && template!=null && !targetPackage.isEmpty();}
-    public synchronized void invalidate(){a=null;b=null;roi=null;template=null;targetPackage="";}
+    public volatile boolean autoVerified,setupDone;
+    public volatile int panelSize=2;
+    public synchronized boolean positionsReady(){return a!=null && b!=null && !targetPackage.isEmpty();}
+    public synchronized boolean imageReady(){return roi!=null && template!=null;}
+    public synchronized boolean ready(){return positionsReady() && (autoVerified || imageReady());}
+    public synchronized void invalidate(){a=null;b=null;roi=null;template=null;targetPackage="";autoVerified=false;setupDone=false;}
     public synchronized boolean geometry(int w,int h,int r){return width==w && height==h && rotation==r;}
     public synchronized void setGeometry(int w,int h,int r){if(!geometry(w,h,r))invalidate();width=w;height=h;rotation=r;}
     public static void sample(Image image,Rect rect,float[] out,int sw,int sh){
@@ -34,7 +38,7 @@ public final class Profile {
     public synchronized String setupSummary(){return "1번 위치: "+(a==null?"미설정":"설정됨")+"\n3번 위치: "+(b==null?"미설정":"설정됨")+"\n완료 표시 영역: "+(template==null?"미설정":"설정됨");}
     public synchronized void save(Context c){
         try{
-            JSONObject o=new JSONObject().put("version",2).put("width",width).put("height",height).put("rotation",rotation).put("package",targetPackage).put("repeats",repeats).put("testDelay",testDelay).put("randomTest",randomTest);
+            JSONObject o=new JSONObject().put("version",3).put("width",width).put("height",height).put("rotation",rotation).put("package",targetPackage).put("repeats",repeats).put("testDelay",testDelay).put("randomTest",randomTest).put("autoVerified",autoVerified).put("setupDone",setupDone).put("panelSize",panelSize);
             if(a!=null)o.put("a",new JSONArray(new int[]{a.x,a.y}));if(b!=null)o.put("b",new JSONArray(new int[]{b.x,b.y}));
             if(roi!=null && template!=null){o.put("roi",new JSONArray(new int[]{roi.left,roi.top,roi.right,roi.bottom}));JSONArray data=new JSONArray();for(float v:template)data.put(v);o.put("template",data);}
             android.util.AtomicFile f=new android.util.AtomicFile(new File(c.getFilesDir(),"profile.json"));FileOutputStream out=null;
@@ -45,11 +49,12 @@ public final class Profile {
         File f=new File(c.getFilesDir(),"profile.json");if(!f.exists())return;
         try(FileInputStream in=new FileInputStream(f)){
             JSONObject o=new JSONObject(new String(in.readAllBytes(),java.nio.charset.StandardCharsets.UTF_8));
-            if(o.optInt("version")!=2){invalidate();return;}
+            if(o.optInt("version")<2 || o.optInt("version")>3){invalidate();return;}
             width=o.getInt("width");height=o.getInt("height");rotation=o.getInt("rotation");targetPackage=o.optString("package");repeats=o.optInt("repeats",1);testDelay=o.optInt("testDelay",6100);randomTest=o.optBoolean("randomTest");
             JSONArray p=o.optJSONArray("a");if(p!=null)a=new Point(p.getInt(0),p.getInt(1));p=o.optJSONArray("b");if(p!=null)b=new Point(p.getInt(0),p.getInt(1));
             JSONArray r=o.optJSONArray("roi"),data=o.optJSONArray("template");
             if(r!=null && data!=null && data.length()==SAMPLE_W*SAMPLE_H){roi=new Rect(r.getInt(0),r.getInt(1),r.getInt(2),r.getInt(3));template=new float[data.length()];for(int i=0;i<template.length;i++)template[i]=(float)data.getDouble(i);}
+            autoVerified=o.optBoolean("autoVerified");setupDone=o.optBoolean("setupDone",positionsReady() && imageReady());panelSize=Math.max(0,Math.min(3,o.optInt("panelSize",2)));
         }catch(Exception ex){invalidate();AppState.log("설정을 다시 지정하세요");}
     }
 }

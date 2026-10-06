@@ -64,7 +64,9 @@ jobs:
           arch: x86_64
           profile: pixel_2
           disable-animations: true
-          script: bash ./gradlew connectedDebugAndroidTest --no-daemon
+          script: |
+            bash ./gradlew connectedDebugAndroidTest --no-daemon
+            adb pull /sdcard/Android/data/app.get1won/files/ux app/build/reports/ux
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -72,3 +74,4 @@ jobs:
           path: |
             app/build/reports/androidTests/
             app/build/outputs/androidTest-results/
+            app/build/reports/ux/

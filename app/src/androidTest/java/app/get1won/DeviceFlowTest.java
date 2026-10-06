@@ -38,15 +38,19 @@ public class DeviceFlowTest {
         TestActivity activity=(TestActivity)i.startActivitySync(new Intent(i.getTargetContext(),TestActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
         i.waitForIdleSync();i.runOnMainSync(activity::calibrateForDeviceTest);
         until(activity::calibrationDone,15000,"테스트 이미지 등록 실패");
-        i.runOnMainSync(()->{AppState.profile.repeats=50;AppState.profile.randomTest=true;activity.beginRun();});
+        android.graphics.Rect savedRoi=new android.graphics.Rect(AppState.profile.roi);float[] savedTemplate=AppState.profile.template.clone();
+        i.runOnMainSync(()->{AppState.profile.roi=null;AppState.profile.template=null;AppState.profile.autoVerified=true;AppState.profile.repeats=50;AppState.profile.randomTest=true;activity.beginRun();});
         long deadline=SystemClock.uptimeMillis()+900000;
-        while(SystemClock.uptimeMillis()<deadline && AppState.engine.active()){
+        while(SystemClock.uptimeMillis()<deadline && (AppState.engine.active() || AppState.accessibility.startRequest.pending())){
             SystemClock.sleep(200);
         }
         assertEquals(diagnostic(),50,AppState.engine.completed);
         assertEquals(Engine.State.IDLE,AppState.engine.state);
         final int[][] counters={null};i.runOnMainSync(()->counters[0]=activity.counters());
         assertArrayEquals(new int[]{50,0,0,0,0,0,0},counters[0]);
+        // Hidden accessibility text must use the saved image fallback, through real capture.
+        i.runOnMainSync(()->{activity.hideCompletionAccessibility=true;AppState.profile.autoVerified=false;AppState.profile.roi=savedRoi;AppState.profile.template=savedTemplate;AppState.profile.repeats=1;activity.beginRun();});
+        until(()->AppState.engine.completed==1 && AppState.engine.state==Engine.State.IDLE && !AppState.accessibility.startRequest.pending(),20000,"이미지 보조 인식 실패");
         long backs=AppState.engine.actions[1];
         i.runOnMainSync(()->{AppState.profile.repeats=1;AppState.profile.randomTest=false;AppState.profile.testDelay=0;activity.beginRun();});
         until(()->AppState.engine.state==Engine.State.PAUSED,35000,"영구 대기에서 시간 초과 일시정지 실패");

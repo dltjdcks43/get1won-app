@@ -20,8 +20,9 @@ public final class AppState {
         public boolean act(int step,long generation){AutomationService s=accessibility;return capturing && s!=null && s.execute(step,generation);}
         public void log(String message){AppState.log(message);}
     });
-    public static void stop(){synchronized(engine){engine.stop();CaptureService.cancelRegistration();AutomationService s=accessibility;if(s!=null)s.cancelSelection();}}
-    public static void settingsChanged(){synchronized(engine){engine.settingsChanged();CaptureService.cancelRegistration();}}
+    public static void stop(){synchronized(engine){engine.stop();CaptureService.cancelRegistration();AutomationService s=accessibility;if(s!=null)s.cancelSelection();notice="중지했어요.";}}
+    public static void settingsChanged(){synchronized(engine){engine.settingsChanged();CaptureService.cancelRegistration();AutomationService s=accessibility;if(s!=null)s.cancelSelection();}}
+    public static String friendly(){AutomationService s=accessibility;if(s!=null && s.preparing())return "준비하고 있어요";if(engine.state==Engine.State.IDLE)return "사용할 준비가 됐어요";return Engine.label(engine.state);}
     public static String status(){synchronized(engine){return "접근성   "+(accessibility==null?"○ 꺼짐":"● 켜짐")+"\n화면 공유   "+(capturing?"● 실행 중":"○ 중지")+"\n\n현재: "+Engine.label(engine.state)+"\n완료: "+engine.completed+"회";}}
     public static String advanced(){synchronized(engine){return "state: "+engine.state+"\ngeneration: "+engine.generation+"\ncycleId: "+engine.cycleId+"\n1/2/3/4: "+Arrays.toString(engine.actions)+"\n완료 감지: "+engine.detections+"\n오류: "+engine.errors+"\n"+engine.reason+"\n\n"+logs();}}
 }

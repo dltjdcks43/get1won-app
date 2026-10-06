@@ -5,9 +5,10 @@ public final class ScreenStability {
     public static final int WIDTH=48,HEIGHT=72,SIZE=WIDTH*HEIGHT;
     public static final long QUIET_NANOS=250_000_000L,MAX_FRAME_GAP=200_000_000L;
     private final float[] before=new float[SIZE],anchor=new float[SIZE];
-    private boolean initialized;
+    private boolean initialized,requireChange=true;
     private long quietSince=-1,lastTime;
-    public void begin(float[] sample){clear();if(valid(sample)){System.arraycopy(sample,0,before,0,SIZE);initialized=true;}}
+    public void begin(float[] sample){clear();requireChange=true;if(valid(sample)){System.arraycopy(sample,0,before,0,SIZE);initialized=true;}}
+    public void beginInitial(){clear();initialized=true;requireChange=false;}
     public void clear(){initialized=false;resetQuiet();}
     public void resetQuiet(){quietSince=-1;lastTime=0;}
     public static boolean valid(float[] a){if(a==null || a.length!=SIZE)return false;int count=0;for(float v:a)if(Float.isFinite(v))count++;return count>=SIZE*0.35;}
@@ -27,7 +28,7 @@ public final class ScreenStability {
         if(!initialized || !valid(sample)){resetQuiet();return false;}
         if(lastTime!=0 && time<=lastTime)return false;
         boolean gap=lastTime!=0 && time-lastTime>MAX_FRAME_GAP;lastTime=time;
-        double movement=difference(before,sample);
+        double movement=requireChange?difference(before,sample):1;
         if(!Double.isFinite(movement)){resetQuiet();return false;}
         if(movement<0.06){quietSince=-1;return false;}
         // A failed/no-op click or BACK cannot pass merely because the old screen is still.

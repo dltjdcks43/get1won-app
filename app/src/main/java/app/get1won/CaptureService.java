@@ -52,7 +52,7 @@ public final class CaptureService extends Service {
             reader=ImageReader.newInstance(width,height,PixelFormat.RGBA_8888,3);
             reader.setOnImageAvailableListener(this::onImage,handler);
             display=projection.createVirtualDisplay("automation-screen",width,height,getResources().getDisplayMetrics().densityDpi,DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,reader.getSurface(),null,handler);
-            AppState.capturing=true;AppState.notice="사용할 앱 화면에서 세 항목을 지정하세요";handler.post(watchdog);
+            AppState.capturing=true;AppState.notice="화면을 확인할 준비가 됐어요.";handler.post(watchdog);
         }catch(Exception ex){AppState.engine.fail("화면 공유 시작 실패: "+ex.getMessage());stopSelf();}
         return START_NOT_STICKY;
     }
@@ -77,16 +77,18 @@ public final class CaptureService extends Service {
             frameAge=(now-stamp)/1_000_000L;
             if(stamp<=0 || stamp>now+50_000_000L || now-stamp>250_000_000L || stamp<=lastActionNanos)return;
             AutomationService service=AppState.accessibility;
-            if(service==null || (!AppState.engine.active() && pending==null))return;
+            if(service==null || !service.wantsFrames())return;
             // Node queries can require a main-thread reply. Keep them outside both locks.
-            boolean target=service.targetVisible();
-            boolean waiting=target && pending==null && service.waitTextVisible();
+            AutomationService.ScreenInfo info=service.readScreen(generation);
+            boolean target=info.target(),waiting=info.waiting();
+            service.observedForeground(generation,info);
             long checkedAt=System.nanoTime();
             queryMillis=(checkedAt-now)/1_000_000L;lastTarget=target;lastWaiting=waiting;
             if(checkedAt-stamp>250_000_000L)return;
             synchronized(AppState.engine){
                 if(generation!=AppState.engine.generation())return;
                 service.frameEvidence(generation,target,waiting,checkedAt);
+                if(service.probing() && info.complete() && !waiting){service.probeSucceeded(generation);return;}
                 Pending task=pending;
                 if(task!=null){
                     if(task.generation!=generation){pending=null;return;}
@@ -95,25 +97,30 @@ public final class CaptureService extends Service {
                     if(!target){AppState.notice="지정한 앱 화면에서 영역을 선택하세요";service.selectionSaved(generation);return;}
                     Profile.sample(image,task.roi,roiBuffer,Profile.SAMPLE_W,Profile.SAMPLE_H);
                     if(Matcher.contrast(roiBuffer)<.025){AppState.notice="단색 영역은 사용할 수 없습니다. 완료 글자 전체를 지정하세요";service.selectionSaved(generation);return;}
-                    synchronized(AppState.profile){Profile p=AppState.profile;p.setGeometry(width,height,rotation);p.roi=new Rect(task.roi);p.template=roiBuffer.clone();p.save(this);}
-                    AppState.notice="완료 표시 영역 저장 완료";service.selectionSaved(generation);return;
+                    synchronized(AppState.profile){Profile p=AppState.profile;p.setGeometry(width,height,rotation);p.roi=new Rect(task.roi);p.template=roiBuffer.clone();p.autoVerified=info.complete();p.save(this);}
+                    AppState.notice="완료 화면을 기억했어요.";service.selectionSaved(generation);return;
+                }
+                if(service.startRequest.pending()){
+                    sampleScreen(image,AppState.profile.roi,service.overlayBounds());
+                    if(service.startRequest.frame(generation,stamp,target,waiting || info.complete(),screenBuffer))AppState.engine.start(stamp,AppState.profile.repeats);
+                    return;
                 }
                 if(!AppState.engine.active())return;
                 if(!target){AppState.engine.pause("지정한 앱 화면을 벗어났습니다");return;}
                 Profile p=AppState.profile;
                 synchronized(p){
                     if(!p.ready() || !p.geometry(width,height,rotation)){AppState.engine.pause("세 항목을 다시 지정하세요");return;}
-                    Profile.sample(image,p.roi,roiBuffer,Profile.SAMPLE_W,Profile.SAMPLE_H);
-                    boolean completion=Matcher.score(roiBuffer,p.template,Profile.SAMPLE_W)>=.96;
+                    boolean completion=info.complete();
+                    if(!completion && p.imageReady()){Profile.sample(image,p.roi,roiBuffer,Profile.SAMPLE_W,Profile.SAMPLE_H);completion=Matcher.score(roiBuffer,p.template,Profile.SAMPLE_W)>=.96;}
                     lastCompletion=completion;
-                    sampleScreen(image,p.roi,service.overlayBounds());
+                    sampleScreen(image,p.roi!=null?p.roi:info.textBounds(),service.overlayBounds());
                     AppState.engine.frame(new Engine.Frame(generation,stamp,completion,waiting,screenBuffer));
                 }
             }
         }catch(Exception ex){if(!closing)AppState.engine.fail("화면 분석 실패: "+ex.getMessage());}
     }
     @Override public void onDestroy(){
-        closing=true;AppState.capturing=false;AppState.engine.pause("화면 공유 중지");cancelRegistration();
+        closing=true;AppState.capturing=false;AppState.stop();AppState.notice="화면 공유가 끝났어요. 시작하기를 눌러 다시 연결해주세요.";
         getSystemService(DisplayManager.class).unregisterDisplayListener(displayListener);
         if(handler!=null)handler.removeCallbacksAndMessages(null);if(display!=null)display.release();if(reader!=null)reader.close();if(projection!=null)projection.stop();if(thread!=null)thread.quitSafely();super.onDestroy();
     }

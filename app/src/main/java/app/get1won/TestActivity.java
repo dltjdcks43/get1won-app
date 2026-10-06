@@ -18,7 +18,7 @@ public final class TestActivity extends Activity {
     private final TestAudit audit=new TestAudit();
     private FrameLayout root;private TextView completion;private Button a,b;
     private String screen="home",selection;
-    private boolean received,transitioning,monitoring,calibrating;
+    private boolean received,transitioning,monitoring;private volatile boolean calibrating;private boolean registrationOwner;boolean hideCompletionAccessibility;
     private long fixtureGeneration;
     private final android.window.OnBackInvokedCallback back=this::back;
     private int dp(int n){return Math.round(n*getResources().getDisplayMetrics().density);}
@@ -33,7 +33,7 @@ public final class TestActivity extends Activity {
     private void render(String next){
         ui.removeCallbacksAndMessages(null);long token=++fixtureGeneration;screen=next;transitioning=false;
         root=new FrameLayout(this);root.setBackgroundColor(next.equals("home")?0xFFF0F6FF:next.equals("screenB")?0xFFB8DBBE:0xFFFFE4B8);setContentView(root);
-        completion=place(text(next.equals("detail")?"3초 구경해요":next.equals("preview")?"1원 받았어요":"",24),.105f,56);completion.setBackgroundColor(Color.WHITE);
+        completion=place(text(next.equals("detail")?"3초 구경해요":next.equals("preview")?"1원 받았어요":"",24),.105f,56);completion.setBackgroundColor(Color.WHITE);if(hideCompletionAccessibility)completion.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
         place(text(next.equals("home")?"테스트 시작 화면":next.equals("screenB")?"테스트 B 화면":"테스트 상세 화면",24),.26f,64);
         if(next.equals("home")){
             a=place(button("1번 대상 버튼",()->{observe(1);received=false;render("detail");}),.43f,60);
@@ -74,7 +74,7 @@ public final class TestActivity extends Activity {
     private Rect area(View v){int[] p=new int[2];v.getLocationOnScreen(p);return new Rect(p[0]+dp(4),p[1]+dp(4),p[0]+v.getWidth()-dp(4),p[1]+v.getHeight()-dp(4));}
     /** Device-test helper only: records the same three inputs from live fixture geometry. */
     void calibrateForDeviceTest(){
-        AppState.settingsChanged();calibrating=true;root.post(this::calibrateLaidOut);
+        AppState.settingsChanged();calibrating=true;registrationOwner=true;root.post(this::calibrateLaidOut);
     }
     private void calibrateLaidOut(){
         if(!a.isLaidOut() || !b.isLaidOut() || a.getWidth()==0 || b.getWidth()==0){root.postOnAnimation(this::calibrateLaidOut);return;}
@@ -83,10 +83,11 @@ public final class TestActivity extends Activity {
         render("preview");root.post(()->{CaptureService.register(area(completion));waitForCalibration(SystemClock.uptimeMillis()+5000);});
     }
     private void waitForCalibration(long deadline){
-        if(AppState.profile.ready()){calibrating=false;render("home");if(getIntent().getBooleanExtra("calibrate",false)){AppState.notice="테스트 설정 완료. 시작을 누르세요.";finish();}return;}
+        if(AppState.profile.ready()){calibrating=false;AppState.profile.setupDone=true;AppState.profile.save(this);render("home");if(getIntent().getBooleanExtra("calibrate",false)){AppState.notice="테스트 설정 완료. 시작을 누르세요.";finish();}return;}
         if(SystemClock.uptimeMillis()>=deadline){calibrating=false;AppState.notice="시험용 영역 등록 실패";return;}
         ui.postDelayed(()->waitForCalibration(deadline),50);
     }
+    boolean ownsRegistration(){return registrationOwner;}
     boolean calibrationDone(){return !calibrating && AppState.profile.ready();}
     int[] counters(){return audit.values();}
 }

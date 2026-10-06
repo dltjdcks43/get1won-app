@@ -80,15 +80,15 @@ public final class Engine {
         }
     }
     public static String label(State s){return switch(s){
-        case IDLE -> "준비 / 중지";
-        case STEP1_TAP -> "1번 위치 누르는 중";
-        case WAIT_COMPLETION -> "완료 표시 기다리는 중";
-        case STEP2_BACK -> "2번 뒤로가기";
-        case WAIT_STABLE_AFTER_STEP2,WAIT_STABLE_AFTER_STEP3,WAIT_STABLE_AFTER_STEP4 -> "화면 전환 기다리는 중";
-        case STEP3_TAP -> "3번 위치 누르는 중";
-        case STEP4_BACK -> "4번 뒤로가기";
-        case NEXT_CYCLE -> "다음 반복 준비";
-        case PAUSED -> "일시정지";
-        case ERROR -> "화면을 확인해 주세요";
+        case IDLE -> "사용할 준비가 됐어요";
+        case STEP1_TAP -> "처음 위치를 누르고 있어요";
+        case WAIT_COMPLETION -> "완료 화면을 기다리고 있어요";
+        case STEP2_BACK -> "이전 화면으로 돌아가요";
+        case WAIT_STABLE_AFTER_STEP2,WAIT_STABLE_AFTER_STEP3,WAIT_STABLE_AFTER_STEP4 -> "잠시 기다려주세요";
+        case STEP3_TAP -> "포인트 화면을 열고 있어요";
+        case STEP4_BACK -> "이전 화면으로 돌아가요";
+        case NEXT_CYCLE -> "다음 반복을 준비하고 있어요";
+        case PAUSED -> "잠시 멈췄어요";
+        case ERROR -> "설정을 다시 확인해주세요";
     };}
 }
