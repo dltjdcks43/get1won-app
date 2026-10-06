@@ -18,7 +18,7 @@ public final class AutomationService extends AccessibilityService {
     final StartRequest startRequest=new StartRequest();
     private volatile String pendingSelection;private volatile boolean probing;private long pendingGeneration;
     private volatile long revision;private long readRevision=-1,readGeneration=-1,readAction=-1,readAt;
-    private boolean textWaiting,textComplete;private Rect textBounds;private volatile Rect completionBounds;
+    private boolean textWaiting,textComplete;private Rect textBounds;private volatile Rect completionBounds;private volatile String completionPackage="";
     private int appliedSize=-1;private Button stopButton,moveButton;private boolean manuallyPlaced;
     public record ScreenInfo(boolean target,boolean waiting,boolean complete,Rect textBounds,String pkg) {}
     public boolean preparing(){return startRequest.pending() || probing || pendingSelection!=null;}
@@ -35,7 +35,7 @@ public final class AutomationService extends AccessibilityService {
             for(AccessibilityNodeInfo n:root.findAccessibilityNodeInfosByText("1원"))if(n.isVisibleToUser() && (CompletionText.matches(n.getText()) || CompletionText.matches(n.getContentDescription()))){Rect r=new Rect();n.getBoundsInScreen(r);if(!r.isEmpty() && Rect.intersects(r,wm.getMaximumWindowMetrics().getBounds())){textComplete=true;textBounds=r;break;}}
             readRevision=rev;readGeneration=generation;readAction=action;readAt=now;
         }
-        if(textBounds!=null)completionBounds=new Rect(textBounds);
+        if(textBounds!=null){completionPackage=pkg;completionBounds=new Rect(textBounds);}
         return new ScreenInfo(true,textWaiting,textComplete,textBounds,pkg);
     }
     void observedForeground(long generation,ScreenInfo info){
@@ -97,7 +97,7 @@ public final class AutomationService extends AccessibilityService {
     void resizePanel(){if(panel==null)return;float s=scale();appliedSize=AppState.profile.panelSize;status.setTextSize(13*s);panel.setPadding(dp(Math.round(8*s)),dp(Math.round(8*s)),dp(Math.round(8*s)),dp(Math.round(6*s)));for(Button b:new Button[]{toggle,stopButton,moveButton}){b.setTextSize(13*s);b.setMinimumHeight(dp(Math.max(48,Math.round(40*s))));b.setMinHeight(dp(Math.max(48,Math.round(40*s))));b.setPadding(dp(Math.round(6*s)),dp(Math.round(4*s)),dp(Math.round(6*s)),dp(Math.round(4*s)));LinearLayout.LayoutParams buttonParams=(LinearLayout.LayoutParams)b.getLayoutParams();buttonParams.setMarginEnd(b==moveButton?0:dp(Math.round(4*s)));b.setLayoutParams(buttonParams);}params.width=Math.min(dp(Math.round(240*s)),wm.getMaximumWindowMetrics().getBounds().width()-dp(16));wm.updateViewLayout(panel,params);manuallyPlaced=false;}
     public Rect overlayBounds(){return bounds;}
     View controls(){return panel;}
-    private boolean overlaps(Rect box){synchronized(AppState.profile){Profile p=AppState.profile;return (p.a!=null && box.contains(p.a.x,p.a.y)) || (p.b!=null && box.contains(p.b.x,p.b.y)) || (p.roi!=null && Rect.intersects(box,p.roi)) || (completionBounds!=null && Rect.intersects(box,completionBounds));}}
+    private boolean overlaps(Rect box){synchronized(AppState.profile){Profile p=AppState.profile;return (p.a!=null && box.contains(p.a.x,p.a.y)) || (p.b!=null && box.contains(p.b.x,p.b.y)) || (p.roi!=null && Rect.intersects(box,p.roi)) || (completionBounds!=null && completionPackage.equals(p.targetPackage) && Rect.intersects(box,completionBounds));}}
     private boolean placePanel(){
         Rect d=wm.getMaximumWindowMetrics().getBounds();int w=params.width;panel.measure(View.MeasureSpec.makeMeasureSpec(w,View.MeasureSpec.EXACTLY),View.MeasureSpec.makeMeasureSpec(0,View.MeasureSpec.UNSPECIFIED));int h=panel.getMeasuredHeight();int top=dp(28),low=d.height()-h-dp(34);
         if(low<top)return false;
@@ -129,7 +129,7 @@ public final class AutomationService extends AccessibilityService {
             @Override public boolean performClick(){super.performClick();return true;}
         };
         layer.addView(selection,new FrameLayout.LayoutParams(-1,-1));
-        TextView guide=new TextView(this);guide.setText((key.equals("completion")?"‘1원 받았어요’ 부분을 둘러주세요.":"정할 위치를 한 번 눌러주세요.")+"\n취소하려면 이 안내를 눌러주세요.");guide.setTextSize(20);guide.setTextColor(Color.BLACK);guide.setBackgroundColor(0xF5FFFFFF);guide.setPadding(dp(16),dp(12),dp(16),dp(36));guide.setMinimumHeight(dp(96));guide.setOnClickListener(v->{removePicker();selectionSaved(generation);});layer.addView(guide,new FrameLayout.LayoutParams(-1,-2,Gravity.BOTTOM));
+        TextView guide=new TextView(this);guide.setText(key.equals("completion")?R.string.pick_completion_help:R.string.pick_position_help);guide.setTextSize(20);guide.setTextColor(Color.BLACK);guide.setBackgroundColor(0xF5FFFFFF);guide.setPadding(dp(16),dp(12),dp(16),dp(36));guide.setMinimumHeight(dp(96));guide.setOnClickListener(v->{removePicker();selectionSaved(generation);});layer.addView(guide,new FrameLayout.LayoutParams(-1,-2,Gravity.BOTTOM));
         WindowManager.LayoutParams lp=new WindowManager.LayoutParams(-1,-1,WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE|WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN|WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,PixelFormat.TRANSLUCENT);
         lp.setFitInsetsTypes(0);lp.layoutInDisplayCutoutMode=WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS;lp.gravity=Gravity.TOP|Gravity.LEFT;wm.addView(picker,lp);
     }

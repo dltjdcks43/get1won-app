@@ -79,7 +79,7 @@ public final class TestActivity extends Activity {
     private void calibrateLaidOut(){
         if(!a.isLaidOut() || !b.isLaidOut() || a.getWidth()==0 || b.getWidth()==0){root.postOnAnimation(this::calibrateLaidOut);return;}
         Profile p=AppState.profile;
-        synchronized(p){Rect display=getSystemService(WindowManager.class).getMaximumWindowMetrics().getBounds();p.setGeometry(display.width(),display.height(),getDisplay().getRotation());p.targetPackage=getPackageName();Rect ra=area(a),rb=area(b);p.a=new Point(ra.centerX(),ra.centerY());p.b=new Point(rb.centerX(),rb.centerY());p.roi=null;p.template=null;p.save(this);}
+        synchronized(p){Rect display=getSystemService(WindowManager.class).getMaximumWindowMetrics().getBounds();p.setGeometry(display.width(),display.height(),getDisplay().getRotation());p.targetPackage=getPackageName();Rect ra=area(a),rb=area(b);p.a=new Point(ra.centerX(),ra.centerY());p.b=new Point(rb.centerX(),rb.centerY());p.roi=null;p.template=null;p.autoVerified=false;p.save(this);}
         render("preview");root.post(()->{CaptureService.register(area(completion));waitForCalibration(SystemClock.uptimeMillis()+5000);});
     }
     private void waitForCalibration(long deadline){
