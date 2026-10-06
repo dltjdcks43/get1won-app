@@ -3,125 +3,100 @@ package app.get1won;
 import android.app.*;
 import android.content.*;
 import android.content.pm.ServiceInfo;
-import android.graphics.PixelFormat;
-import android.graphics.Rect;
+import android.graphics.*;
 import android.hardware.display.*;
 import android.media.*;
 import android.media.projection.*;
 import android.os.*;
 import android.view.*;
+import com.google.mlkit.vision.common.InputImage;
+import com.google.mlkit.vision.text.*;
+import com.google.mlkit.vision.text.korean.KoreanTextRecognizerOptions;
+import java.util.*;
+import java.nio.ByteBuffer;
 
-/** Acquisition and analysis run on one background looper; no frame queue or full Bitmap. */
+/** Bundled Korean model. One OCR task and newest ImageReader buffer, never a screenshot file. */
 public final class CaptureService extends Service {
     private HandlerThread thread;private Handler handler;private MediaProjection projection;
     private ImageReader reader;private VirtualDisplay display;private int width,height,rotation;
-    private volatile boolean closing;
-    private final float[] roiBuffer=new float[Profile.SAMPLE_W*Profile.SAMPLE_H];
-    private final float[] screenBuffer=new float[ScreenStability.SIZE];
-    private Rect whole;
-    public static volatile long lastActionNanos;
-    private static volatile long frameAge,queryMillis; private static volatile boolean lastTarget,lastWaiting,lastCompletion;
-    public static String frameInfo(){return "frame age ms="+frameAge+" query ms="+queryMillis+" target="+lastTarget+" waiting="+lastWaiting+" completion="+lastCompletion;}
-    private static volatile Pending pending;
-    private record Pending(Rect roi,long after,long generation) {}
-    public static void register(Rect roi){synchronized(AppState.engine){pending=new Pending(new Rect(roi),System.nanoTime()+250_000_000L,AppState.engine.generation());}}
-    public static void cancelRegistration(){pending=null;}
-    public static Rect registrationRect(){Pending p=pending;return p==null?null:p.roi;}
+    private volatile boolean closing;private boolean busy;private long lastStamp;
+    private TextRecognizer recognizer;
+    public static volatile String info="화면 확인이 꺼져 있어요.";
     @Override public IBinder onBind(Intent intent){return null;}
-    @Override public void onCreate(){super.onCreate();AppState.initialize(this);thread=new HandlerThread("LatestFrameAnalysis");thread.start();handler=new Handler(thread.getLooper());}
+    @Override public void onCreate(){super.onCreate();AppState.initialize(this);thread=new HandlerThread("KoreanOcrLatestFrame");thread.start();handler=new Handler(thread.getLooper());recognizer=TextRecognition.getClient(new KoreanTextRecognizerOptions.Builder().build());}
     @Override public int onStartCommand(Intent intent,int flags,int startId){
         if(intent==null || "STOP".equals(intent.getAction())){AppState.stop();stopSelf();return START_NOT_STICKY;}
         if(projection!=null)return START_NOT_STICKY;
-        NotificationManager nm=getSystemService(NotificationManager.class);
-        nm.createNotificationChannel(new NotificationChannel("capture","화면 분석",NotificationManager.IMPORTANCE_LOW));
+        NotificationManager nm=getSystemService(NotificationManager.class);nm.createNotificationChannel(new NotificationChannel("capture","화면 확인",NotificationManager.IMPORTANCE_LOW));
         PendingIntent stop=PendingIntent.getService(this,1,new Intent(this,CaptureService.class).setAction("STOP"),PendingIntent.FLAG_IMMUTABLE);
-        Notification notification=new Notification.Builder(this,"capture").setSmallIcon(android.R.drawable.ic_menu_view).setContentTitle("1원 받기 — 화면 분석").setContentText("화면은 저장하거나 전송하지 않습니다").setOngoing(true).addAction(new Notification.Action.Builder(null,"중지",stop).build()).build();
-        startForeground(1,notification,ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION);
+        startForeground(1,new Notification.Builder(this,"capture").setSmallIcon(android.R.drawable.ic_menu_view).setContentTitle("1원 받기 — 화면 확인").setContentText("기기 안에서만 확인합니다").setOngoing(true).addAction(new Notification.Action.Builder(null,"중지",stop).build()).build(),ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION);
         try{
-            Rect bounds=getSystemService(WindowManager.class).getMaximumWindowMetrics().getBounds();
-            width=bounds.width();height=bounds.height();whole=new Rect(0,0,width,height);
-            rotation=getSystemService(DisplayManager.class).getDisplay(Display.DEFAULT_DISPLAY).getRotation();
-            Intent data=intent.getParcelableExtra("data",Intent.class);if(data==null)throw new IllegalArgumentException("화면 공유 동의가 없습니다");
+            Rect b=getSystemService(WindowManager.class).getMaximumWindowMetrics().getBounds();width=b.width();height=b.height();rotation=getSystemService(DisplayManager.class).getDisplay(Display.DEFAULT_DISPLAY).getRotation();
+            Intent data=intent.getParcelableExtra("data",Intent.class);if(data==null)throw new IllegalArgumentException("화면 확인 동의가 없어요.");
             projection=getSystemService(MediaProjectionManager.class).getMediaProjection(intent.getIntExtra("code",0),data);
             projection.registerCallback(new MediaProjection.Callback(){
-                @Override public void onStop(){AppState.engine.pause("화면 공유 종료");stopSelf();}
+                @Override public void onStop(){if(!closing){AppState.engine.pause("화면 확인이 끝났어요. 다시 허용해주세요.");stopSelf();}}
                 @Override public void onCapturedContentResize(int w,int h){if(w!=width || h!=height)invalidateGeometry();}
-                @Override public void onCapturedContentVisibilityChanged(boolean visible){if(!visible)AppState.engine.pause("공유 화면이 보이지 않습니다");}
+                @Override public void onCapturedContentVisibilityChanged(boolean visible){if(!visible && AppState.engine.active())AppState.engine.pause("화면이 가려져서 잠시 멈췄어요.");}
             },handler);
             getSystemService(DisplayManager.class).registerDisplayListener(displayListener,handler);
-            reader=ImageReader.newInstance(width,height,PixelFormat.RGBA_8888,3);
-            reader.setOnImageAvailableListener(this::onImage,handler);
-            display=projection.createVirtualDisplay("automation-screen",width,height,getResources().getDisplayMetrics().densityDpi,DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,reader.getSurface(),null,handler);
-            AppState.capturing=true;AppState.notice="화면을 확인할 준비가 됐어요.";handler.post(watchdog);
-        }catch(Exception ex){AppState.engine.fail("화면 공유 시작 실패: "+ex.getMessage());stopSelf();}
+            reader=ImageReader.newInstance(width,height,PixelFormat.RGBA_8888,3);reader.setOnImageAvailableListener(this::onImage,handler);
+            display=projection.createVirtualDisplay("local-semantic-ocr",width,height,getResources().getDisplayMetrics().densityDpi,DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,reader.getSurface(),null,handler);
+            AppState.capturing=true;info="한국어 온디바이스 인식 준비됨";
+        }catch(Exception ex){AppState.engine.fail("화면 확인을 시작하지 못했어요.");AppState.log(ex.toString());stopSelf();}
         return START_NOT_STICKY;
     }
-    private final DisplayManager.DisplayListener displayListener=new DisplayManager.DisplayListener(){
-        public void onDisplayAdded(int id){}public void onDisplayRemoved(int id){if(id==Display.DEFAULT_DISPLAY)invalidateGeometry();}
-        public void onDisplayChanged(int id){if(id==Display.DEFAULT_DISPLAY){Rect b=getSystemService(WindowManager.class).getMaximumWindowMetrics().getBounds();int r=getSystemService(DisplayManager.class).getDisplay(id).getRotation();if(b.width()!=width || b.height()!=height || r!=rotation)invalidateGeometry();}}
-    };
-    private void invalidateGeometry(){synchronized(AppState.engine){AppState.settingsChanged();synchronized(AppState.profile){AppState.profile.invalidate();AppState.profile.save(this);}AppState.notice="화면 크기가 바뀌었어요. 위치를 다시 정해주세요.";}stopSelf();}
-    private final Runnable watchdog=new Runnable(){public void run(){if(closing)return;AppState.engine.tick(System.nanoTime());handler.postDelayed(this,100);}};
-    private void sampleScreen(Image image,Rect roi,Rect overlay){
-        Profile.sample(image,whole,screenBuffer,ScreenStability.WIDTH,ScreenStability.HEIGHT);
-        for(int y=0;y<ScreenStability.HEIGHT;y++)for(int x=0;x<ScreenStability.WIDTH;x++){
-            int px=(int)((x+.5)*width/ScreenStability.WIDTH),py=(int)((y+.5)*height/ScreenStability.HEIGHT);
-            // Ignore clocks/navigation, the completion animation, and floating controls.
-            if(y<4 || y>=ScreenStability.HEIGHT-4 || (roi!=null && roi.contains(px,py)) || (overlay!=null && overlay.contains(px,py)))screenBuffer[y*ScreenStability.WIDTH+x]=Float.NaN;
+    private final DisplayManager.DisplayListener displayListener=new DisplayManager.DisplayListener(){public void onDisplayAdded(int id){}public void onDisplayRemoved(int id){if(id==Display.DEFAULT_DISPLAY)invalidateGeometry();}public void onDisplayChanged(int id){if(id==Display.DEFAULT_DISPLAY){Rect b=getSystemService(WindowManager.class).getMaximumWindowMetrics().getBounds();if(b.width()!=width || b.height()!=height || getSystemService(DisplayManager.class).getDisplay(id).getRotation()!=rotation)invalidateGeometry();}}};
+    private void invalidateGeometry(){if(closing)return;AppState.engine.pause("화면 크기가 바뀌었어요. 화면 확인을 다시 허용해주세요.");stopSelf();}
+    private Bitmap sample(Image image,Rect region,Rect overlay){
+        float scale=Math.min(1f,1080f/region.width());int w=Math.max(1,Math.round(region.width()*scale)),h=Math.max(1,Math.round(region.height()*scale));
+        int[] pixels=new int[w*h];Image.Plane plane=image.getPlanes()[0];ByteBuffer data=plane.getBuffer();
+        for(int y=0;y<h;y++)for(int x=0;x<w;x++){
+            int px=Math.min(region.right-1,region.left+(int)((x+.5f)*region.width()/w)),py=Math.min(region.bottom-1,region.top+(int)((y+.5f)*region.height()/h));
+            if(overlay!=null && overlay.contains(px,py)){pixels[y*w+x]=Color.WHITE;continue;}
+            int offset=py*plane.getRowStride()+px*plane.getPixelStride();pixels[y*w+x]=Color.rgb(data.get(offset)&255,data.get(offset+1)&255,data.get(offset+2)&255);
         }
+        return Bitmap.createBitmap(pixels,w,h,Bitmap.Config.ARGB_8888);
     }
     private void onImage(ImageReader source){
-        if(closing)return;long generation=AppState.engine.generation();
+        if(closing)return;
         try(Image image=source.acquireLatestImage()){
-            if(image==null)return;long stamp=image.getTimestamp(),now=System.nanoTime();
-            frameAge=(now-stamp)/1_000_000L;
-            if(stamp<=0 || stamp>now+50_000_000L || now-stamp>250_000_000L || stamp<=lastActionNanos)return;
-            AutomationService service=AppState.accessibility;
-            if(service==null || !service.wantsFrames())return;
-            // Node queries can require a main-thread reply. Keep them outside both locks.
-            AutomationService.ScreenInfo info=service.readScreen(generation);
-            boolean target=info.target(),waiting=info.waiting();
-            service.observedForeground(generation,info);
-            long checkedAt=System.nanoTime();
-            queryMillis=(checkedAt-now)/1_000_000L;lastTarget=target;lastWaiting=waiting;
-            if(checkedAt-stamp>250_000_000L)return;
-            synchronized(AppState.engine){
-                if(generation!=AppState.engine.generation())return;
-                service.frameEvidence(generation,target,waiting,checkedAt);
-                if(service.probing() && info.complete() && !waiting){service.probeSucceeded(generation);return;}
-                Pending task=pending;
-                if(task!=null){
-                    if(task.generation!=generation){pending=null;return;}
-                    if(stamp<=task.after)return;
-                    pending=null;
-                    if(!target){AppState.notice="지정한 앱 화면에서 영역을 선택하세요";service.selectionSaved(generation);return;}
-                    Profile.sample(image,task.roi,roiBuffer,Profile.SAMPLE_W,Profile.SAMPLE_H);
-                    if(Matcher.contrast(roiBuffer)<.025){AppState.notice="단색 영역은 사용할 수 없습니다. 완료 글자 전체를 지정하세요";service.selectionSaved(generation);return;}
-                    synchronized(AppState.profile){Profile p=AppState.profile;p.setGeometry(width,height,rotation);p.roi=new Rect(task.roi);p.template=roiBuffer.clone();p.autoVerified=info.complete();p.save(this);}
-                    AppState.notice="완료 화면을 기억했어요.";service.selectionSaved(generation);return;
-                }
-                if(service.startRequest.pending()){
-                    sampleScreen(image,AppState.profile.roi,service.overlayBounds());
-                    if(service.startRequest.frame(generation,stamp,target,waiting || info.complete(),screenBuffer))AppState.engine.start(stamp,AppState.profile.repeats);
-                    return;
-                }
-                if(!AppState.engine.active())return;
-                if(!target){AppState.engine.pause("지정한 앱 화면을 벗어났습니다");return;}
-                Profile p=AppState.profile;
-                synchronized(p){
-                    if(!p.ready() || !p.geometry(width,height,rotation)){AppState.engine.pause("저장한 위치와 완료 화면을 다시 확인해주세요.");return;}
-                    boolean completion=info.complete();
-                    if(!completion && p.imageReady()){Profile.sample(image,p.roi,roiBuffer,Profile.SAMPLE_W,Profile.SAMPLE_H);completion=Matcher.score(roiBuffer,p.template,Profile.SAMPLE_W)>=.96;}
-                    lastCompletion=completion;
-                    sampleScreen(image,p.roi!=null?p.roi:info.textBounds(),service.overlayBounds());
-                    AppState.engine.frame(new Engine.Frame(generation,stamp,completion,waiting,screenBuffer));
-                }
-            }
-        }catch(Exception ex){if(!closing)AppState.engine.fail("화면 분석 실패: "+ex.getMessage());}
+            if(image==null || busy)return;
+            AutomationService service=AppState.accessibility;if(service==null)return;
+            AutomationService.OcrRequest request=service.ocrRequest();if(request==null)return;
+            long stamp=image.getTimestamp(),now=System.nanoTime();
+            if(stamp<=lastStamp || stamp<=request.after() || stamp<=0 || now-stamp>250_000_000L || stamp>now+50_000_000L)return;
+            if(request.generation()!=AppState.engine.generation())return;
+            lastStamp=stamp;Rect region=new Rect(request.region());if(!region.intersect(0,0,width,height))return;
+            Bitmap bitmap=sample(image,region,service.overlayBounds());busy=true;
+            info="한국어 인식 중";
+            recognizer.process(InputImage.fromBitmap(bitmap,0)).addOnCompleteListener(task->handler.post(()->{
+                try{
+                    if(closing)return;
+                    if(task.isSuccessful()){
+                        List<Semantic.Node> nodes=new ArrayList<>();
+                        for(Text.TextBlock block:task.getResult().getTextBlocks()){
+                            add(nodes,block.getText(),block.getBoundingBox(),region,bitmap);
+                            for(Text.Line line:block.getLines())add(nodes,line.getText(),line.getBoundingBox(),region,bitmap);
+                            // Preserve a wrapped anchor even if ML Kit puts nearby card text in the same block.
+                            var lines=block.getLines();
+                            for(int j=0;j+1<lines.size();j++){
+                                Rect first=lines.get(j).getBoundingBox(),second=lines.get(j+1).getBoundingBox();
+                                if(first!=null && second!=null && second.top-first.bottom<=Math.max(first.height(),second.height())){Rect joined=new Rect(first);joined.union(second);add(nodes,lines.get(j).getText()+" "+lines.get(j+1).getText(),joined,region,bitmap);}
+                            }
+                        }
+                        info="한국어 인식 완료 ("+((System.nanoTime()-stamp)/1_000_000)+"ms)";
+                        service.acceptOcr(request,stamp,nodes);
+                    }else{info="글자를 읽지 못했어요.";AppState.log(String.valueOf(task.getException()));}
+                }finally{bitmap.recycle();busy=false;}
+            }));
+        }catch(Exception ex){busy=false;info="화면 확인 오류";AppState.log(ex.toString());}
     }
-    @Override public void onDestroy(){
-        closing=true;AppState.capturing=false;AppState.stop();AppState.notice="화면 공유가 끝났어요. 시작하기를 눌러 다시 연결해주세요.";
-        getSystemService(DisplayManager.class).unregisterDisplayListener(displayListener);
-        if(handler!=null)handler.removeCallbacksAndMessages(null);if(display!=null)display.release();if(reader!=null)reader.close();if(projection!=null)projection.stop();if(thread!=null)thread.quitSafely();super.onDestroy();
+    private void add(List<Semantic.Node> nodes,String text,Rect r,Rect crop,Bitmap image){
+        if(r==null || r.isEmpty())return;
+        float sx=(float)crop.width()/image.getWidth(),sy=(float)crop.height()/image.getHeight();
+        Semantic.Box b=new Semantic.Box(crop.left+Math.round(r.left*sx),crop.top+Math.round(r.top*sy),crop.left+Math.round(r.right*sx),crop.top+Math.round(r.bottom*sy));
+        nodes.add(new Semantic.Node(nodes.size(),-1,text,b,false,true,"OCR"));
     }
+    @Override public void onDestroy(){closing=true;AppState.capturing=false;info="화면 확인이 꺼져 있어요.";getSystemService(DisplayManager.class).unregisterDisplayListener(displayListener);if(display!=null)display.release();if(reader!=null)reader.close();if(projection!=null)projection.stop();if(recognizer!=null)recognizer.close();if(thread!=null)thread.quitSafely();super.onDestroy();}
 }

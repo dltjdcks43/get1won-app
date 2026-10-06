@@ -1,4 +1,0 @@
-<resources>
-    <string name="pick_position_help">정할 위치를 한 번 눌러주세요.\n취소하려면 이 안내를 눌러주세요.</string>
-    <string name="pick_completion_help">‘1원 받았어요’ 부분을 둘러주세요.\n취소하려면 이 안내를 눌러주세요.</string>
-</resources>

@@ -41,7 +41,7 @@ jobs:
   device-test:
     needs: build
     runs-on: ubuntu-24.04
-    timeout-minutes: 35
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -67,7 +67,7 @@ jobs:
           script: |
             bash ./gradlew connectedDebugAndroidTest --no-daemon
             adb pull /data/local/tmp/get1won-ux app/build/reports/ux
-            test "$(find app/build/reports/ux -name '*.png' | wc -l)" -ge 12
+            test "$(find app/build/reports/ux -name '*.png' | wc -l)" -ge 17
       - uses: actions/upload-artifact@v4
         if: always()
         with:

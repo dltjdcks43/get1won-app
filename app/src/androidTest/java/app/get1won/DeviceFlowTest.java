@@ -1,6 +1,5 @@
 package app.get1won;
-
-import android.app.Instrumentation;
+import android.app.*;
 import android.content.Intent;
 import android.os.SystemClock;
 import androidx.test.platform.app.InstrumentationRegistry;
@@ -10,51 +9,39 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import static org.junit.Assert.*;
 
-/** Runs only on the disposable CI emulator. Real gestures, real projection, real BACK. */
 @RunWith(AndroidJUnit4.class)
 public class DeviceFlowTest {
     private final Instrumentation i=InstrumentationRegistry.getInstrumentation();
-    private final UiDevice device=initializeDevice();
-    private UiDevice initializeDevice(){Configurator.getInstance().setUiAutomationFlags(android.app.UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES);return UiDevice.getInstance(i);}
-    private interface Check { boolean ok(); }
-    private String diagnostic(){try{java.io.ByteArrayOutputStream out=new java.io.ByteArrayOutputStream();device.dumpWindowHierarchy(out);return AppState.status()+"\n"+AppState.notice+"\n"+CaptureService.frameInfo()+"\nA="+AppState.profile.a+" B="+AppState.profile.b+"\n"+AppState.logs()+"\n"+out.toString(java.nio.charset.StandardCharsets.UTF_8);}catch(Exception ex){return ex.toString();}}
-    private void until(Check check,long ms,String why){long end=SystemClock.uptimeMillis()+ms;while(SystemClock.uptimeMillis()<end){if(check.ok())return;SystemClock.sleep(100);}fail(why+"\n"+diagnostic());}
-    @Test public void fiftyRealCyclesAndNeverLeaveWaiting() throws Exception {
-        device.executeShellCommand("settings put secure enabled_accessibility_services app.get1won/app.get1won.AutomationService");
-        device.executeShellCommand("settings put secure accessibility_enabled 1");
-        device.executeShellCommand("pm grant app.get1won android.permission.POST_NOTIFICATIONS");
-        until(()->AppState.accessibility!=null,15000,"접근성 시작 실패");
-        device.wakeUp();device.executeShellCommand("wm dismiss-keyguard");
-        MainActivity main=(MainActivity)i.startActivitySync(new Intent(i.getTargetContext(),MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
-        i.runOnMainSync(main::requestCapture);
-        // Android 14/15/16 system consent labels vary; only affirmative capture buttons are matched.
+    private final UiDevice device=initialize();
+    private UiDevice initialize(){Configurator.getInstance().setUiAutomationFlags(UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES);return UiDevice.getInstance(i);}
+    private interface Check{boolean ok();}
+    private String diagnostic(){return AppState.status()+"\n"+CaptureService.info+"\n"+(AppState.accessibility==null?"":AppState.accessibility.analysis())+"\n"+AppState.advanced();}
+    private void until(Check c,long ms,String why){long end=SystemClock.uptimeMillis()+ms;while(SystemClock.uptimeMillis()<end){if(c.ok())return;SystemClock.sleep(100);}fail(why+"\n"+diagnostic());}
+    private void floatingStart(){UiObject2 start=device.wait(Until.findObject(By.pkg("app.get1won").text("시작")),5000);assertNotNull(diagnostic(),start);start.click();}
+    private void capture(){
+        MainActivity main=(MainActivity)i.startActivitySync(new Intent(i.getTargetContext(),MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));i.runOnMainSync(main::requestCapture);
         long end=SystemClock.uptimeMillis()+15000;
-        while(!AppState.capturing && SystemClock.uptimeMillis()<end){
-            UiObject2 allow=device.findObject(By.pkg("com.android.systemui").res("android:id/button1"));
-            if(allow==null)allow=device.findObject(By.pkg("com.android.systemui").text(java.util.regex.Pattern.compile("(?i)Start now|Start recording|Start sharing|Start|Share|지금 시작|녹화 시작|공유 시작|시작")));
-            if(allow!=null)allow.click();SystemClock.sleep(200);
-        }
-        until(()->AppState.capturing,5000,"화면 공유 동의 실패");
-        TestActivity activity=(TestActivity)i.startActivitySync(new Intent(i.getTargetContext(),TestActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
-        i.waitForIdleSync();i.runOnMainSync(activity::calibrateForDeviceTest);
-        until(activity::calibrationDone,15000,"테스트 이미지 등록 실패");
-        android.graphics.Rect savedRoi=new android.graphics.Rect(AppState.profile.roi);float[] savedTemplate=AppState.profile.template.clone();
-        i.runOnMainSync(()->{AppState.profile.roi=null;AppState.profile.template=null;AppState.profile.autoVerified=true;AppState.profile.repeats=50;AppState.profile.randomTest=true;activity.beginRun();});
-        long deadline=SystemClock.uptimeMillis()+900000;
-        while(SystemClock.uptimeMillis()<deadline && (AppState.engine.active() || AppState.accessibility.startRequest.pending())){
-            SystemClock.sleep(200);
-        }
-        assertEquals(diagnostic(),50,AppState.engine.completed);
-        assertEquals(Engine.State.IDLE,AppState.engine.state);
-        final int[][] counters={null};i.runOnMainSync(()->counters[0]=activity.counters());
-        assertArrayEquals(new int[]{50,0,0,0,0,0,0},counters[0]);
-        // Hidden accessibility text must use the saved image fallback, through real capture.
-        i.runOnMainSync(()->{activity.hideCompletionAccessibility=true;AppState.profile.autoVerified=false;AppState.profile.roi=savedRoi;AppState.profile.template=savedTemplate;AppState.profile.repeats=1;activity.beginRun();});
-        until(()->AppState.engine.completed==1 && AppState.engine.state==Engine.State.IDLE && !AppState.accessibility.startRequest.pending(),20000,"이미지 보조 인식 실패");
-        long backs=AppState.engine.actions[1];
-        i.runOnMainSync(()->{AppState.profile.repeats=1;AppState.profile.randomTest=false;AppState.profile.testDelay=0;activity.beginRun();});
-        until(()->AppState.engine.state==Engine.State.PAUSED,35000,"영구 대기에서 시간 초과 일시정지 실패");
-        assertEquals(backs,AppState.engine.actions[1]);
-        i.runOnMainSync(AppState::stop);long[] counts=AppState.engine.actions.clone();SystemClock.sleep(1000);assertArrayEquals(counts,AppState.engine.actions);i.runOnMainSync(activity::finish);
+        while(!AppState.capturing && SystemClock.uptimeMillis()<end){UiObject2 allow=device.findObject(By.pkg("com.android.systemui").res("android:id/button1"));if(allow==null)allow=device.findObject(By.pkg("com.android.systemui").text(java.util.regex.Pattern.compile("(?i)Start now|Start recording|Start sharing|Start|Share|지금 시작|녹화 시작|공유 시작|시작")));if(allow!=null)allow.click();SystemClock.sleep(200);}
+        until(()->AppState.capturing,5000,"capture consent");i.runOnMainSync(main::finish);
+    }
+    @Test public void hundredRealSemanticCyclesAndSafety() throws Exception {
+        device.wakeUp();device.executeShellCommand("wm dismiss-keyguard");
+        device.executeShellCommand("settings put secure enabled_accessibility_services app.get1won/app.get1won.AutomationService");device.executeShellCommand("settings put secure accessibility_enabled 1");device.executeShellCommand("pm grant app.get1won android.permission.POST_NOTIFICATIONS");until(()->AppState.accessibility!=null,15000,"accessibility");
+        i.runOnMainSync(()->{AppState.stop();i.getTargetContext().stopService(new Intent(i.getTargetContext(),CaptureService.class));AppState.profile.repeats=100;AppState.profile.randomTest=true;AppState.profile.panelSize=2;});
+        TestActivity activity=(TestActivity)i.startActivitySync(new Intent(i.getTargetContext(),TestActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));i.waitForIdleSync();
+        long[] baseline=AppState.engine.actions.clone();long started=SystemClock.uptimeMillis();floatingStart();
+        until(()->AppState.engine.actions[0]>baseline[0],4500,"START must select foreground without 5s delay or registration");assertEquals("app.get1won",AppState.engine.targetPackage);assertTrue(SystemClock.uptimeMillis()-started<5000);assertFalse(AppState.capturing);
+        until(()->!AppState.engine.active(),1_300_000,"100 cycles finished");assertEquals(diagnostic(),100,AppState.engine.completed);assertEquals(Engine.State.IDLE,AppState.engine.state);
+        long[] delta=AppState.engine.actions.clone();for(int n=0;n<4;n++)delta[n]-=baseline[n];assertArrayEquals(new long[]{100,100,100,100},delta);
+        i.runOnMainSync(()->{assertArrayEquals(new int[]{100,0,0,0,0,0,0},activity.counters());assertEquals(0,activity.historyClicks);});
+        // OCR must locate HOME text, points label, completion and HISTORY, with no templates.
+        capture();i.runOnMainSync(()->{AppState.profile.repeats=1;activity.hideAllText=true;activity.hideCompletionAccessibility=true;activity.resetHome();});floatingStart();
+        until(()->AppState.engine.completed==1 && AppState.engine.state==Engine.State.IDLE,35000,"on-device Korean OCR full cycle");
+        i.runOnMainSync(()->{assertArrayEquals(new int[]{101,0,0,0,0,0,0},activity.counters());assertEquals(0,activity.historyClicks);activity.hideAllText=false;activity.hideCompletionAccessibility=false;activity.resetHome();AppState.profile.randomTest=false;AppState.profile.testDelay=0;});
+        long backs=AppState.engine.actions[1];floatingStart();until(()->AppState.engine.state==Engine.State.PAUSED,35000,"never-complete timeout pauses");assertEquals(backs,AppState.engine.actions[1]);
+        i.runOnMainSync(()->{AppState.stop();activity.resetHome();AppState.profile.testDelay=8000;});floatingStart();until(()->AppState.engine.state==Engine.State.WAIT_REWARD_COMPLETE,5000,"waiting before external app");
+        long[] before=AppState.engine.actions.clone();i.getTargetContext().startActivity(new Intent(android.provider.Settings.ACTION_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));until(()->AppState.engine.state==Engine.State.PAUSED,3000,"foreign app pauses");SystemClock.sleep(1200);assertArrayEquals(before,AppState.engine.actions);
+        i.runOnMainSync(AppState::stop);long[] stopped=AppState.engine.actions.clone();SystemClock.sleep(8500);assertArrayEquals(stopped,AppState.engine.actions);
+        device.pressBack();i.runOnMainSync(activity::finish);
     }
 }
