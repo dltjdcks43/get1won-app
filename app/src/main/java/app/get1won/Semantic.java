@@ -22,7 +22,7 @@ public final class Semantic {
         public boolean reward(){return complete!=null || waiting!=null;}
     }
     private static boolean points(String t){return CompletionText.normalize(t).equals("내포인트");}
-    private static boolean anchor(String t){String s=CompletionText.normalize(t);return s.equals("다시혜택구경하고1원받아요") || s.equals("다시구경하고1원받아요");}
+    private static boolean anchor(String t){String s=CompletionText.normalize(t);return s.contains("구경하고") && s.contains("1원받아요");}
     private static Node unique(Scene s,java.util.function.Predicate<String> match){
         Node found=null;
         for(Node n:s.nodes)if(n.enabled && n.box.valid() && match.test(n.text)){
