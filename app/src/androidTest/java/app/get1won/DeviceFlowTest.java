@@ -17,7 +17,7 @@ public class DeviceFlowTest {
     private final UiDevice device=initializeDevice();
     private UiDevice initializeDevice(){Configurator.getInstance().setUiAutomationFlags(android.app.UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES);return UiDevice.getInstance(i);}
     private interface Check { boolean ok(); }
-    private String diagnostic(){try{java.io.ByteArrayOutputStream out=new java.io.ByteArrayOutputStream();device.dumpWindowHierarchy(out);return AppState.status()+"\n"+AppState.notice+"\n"+AppState.logs()+"\n"+out.toString(java.nio.charset.StandardCharsets.UTF_8);}catch(Exception ex){return ex.toString();}}
+    private String diagnostic(){try{java.io.ByteArrayOutputStream out=new java.io.ByteArrayOutputStream();device.dumpWindowHierarchy(out);return AppState.status()+"\n"+AppState.notice+"\n"+CaptureService.frameInfo()+"\nA="+AppState.profile.a+" B="+AppState.profile.b+"\n"+AppState.logs()+"\n"+out.toString(java.nio.charset.StandardCharsets.UTF_8);}catch(Exception ex){return ex.toString();}}
     private void until(Check check,long ms,String why){long end=SystemClock.uptimeMillis()+ms;while(SystemClock.uptimeMillis()<end){if(check.ok())return;SystemClock.sleep(100);}fail(why+"\n"+diagnostic());}
     @Test public void fiftyRealCyclesAndNeverLeaveWaiting() throws Exception {
         device.executeShellCommand("settings put secure enabled_accessibility_services app.get1won/app.get1won.AutomationService");

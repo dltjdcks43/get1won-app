@@ -20,6 +20,8 @@ public final class CaptureService extends Service {
     private final float[] screenBuffer=new float[ScreenStability.SIZE];
     private Rect whole;
     public static volatile long lastActionNanos;
+    private static volatile long frameAge,queryMillis; private static volatile boolean lastTarget,lastWaiting,lastCompletion;
+    public static String frameInfo(){return "frame age ms="+frameAge+" query ms="+queryMillis+" target="+lastTarget+" waiting="+lastWaiting+" completion="+lastCompletion;}
     private static volatile Pending pending;
     private record Pending(Rect roi,long after,long generation) {}
     public static void register(Rect roi){synchronized(AppState.engine){pending=new Pending(new Rect(roi),System.nanoTime()+250_000_000L,AppState.engine.generation());}}
@@ -72,6 +74,7 @@ public final class CaptureService extends Service {
         if(closing)return;long generation=AppState.engine.generation();
         try(Image image=source.acquireLatestImage()){
             if(image==null)return;long stamp=image.getTimestamp(),now=System.nanoTime();
+            frameAge=(now-stamp)/1_000_000L;
             if(stamp<=0 || stamp>now+50_000_000L || now-stamp>250_000_000L || stamp<=lastActionNanos)return;
             AutomationService service=AppState.accessibility;
             if(service==null || (!AppState.engine.active() && pending==null))return;
@@ -79,6 +82,7 @@ public final class CaptureService extends Service {
             boolean target=service.targetVisible();
             boolean waiting=target && pending==null && service.waitTextVisible();
             long checkedAt=System.nanoTime();
+            queryMillis=(checkedAt-now)/1_000_000L;lastTarget=target;lastWaiting=waiting;
             if(checkedAt-stamp>250_000_000L)return;
             synchronized(AppState.engine){
                 if(generation!=AppState.engine.generation())return;
@@ -101,6 +105,7 @@ public final class CaptureService extends Service {
                     if(!p.ready() || !p.geometry(width,height,rotation)){AppState.engine.pause("세 항목을 다시 지정하세요");return;}
                     Profile.sample(image,p.roi,roiBuffer,Profile.SAMPLE_W,Profile.SAMPLE_H);
                     boolean completion=Matcher.score(roiBuffer,p.template,Profile.SAMPLE_W)>=.96;
+                    lastCompletion=completion;
                     sampleScreen(image,p.roi,service.overlayBounds());
                     AppState.engine.frame(new Engine.Frame(generation,stamp,completion,waiting,screenBuffer));
                 }

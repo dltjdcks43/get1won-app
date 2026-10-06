@@ -74,7 +74,11 @@ public final class TestActivity extends Activity {
     private Rect area(View v){int[] p=new int[2];v.getLocationOnScreen(p);return new Rect(p[0]+dp(4),p[1]+dp(4),p[0]+v.getWidth()-dp(4),p[1]+v.getHeight()-dp(4));}
     /** Device-test helper only: records the same three inputs from live fixture geometry. */
     void calibrateForDeviceTest(){
-        AppState.settingsChanged();calibrating=true;Profile p=AppState.profile;
+        AppState.settingsChanged();calibrating=true;root.post(this::calibrateLaidOut);
+    }
+    private void calibrateLaidOut(){
+        if(!a.isLaidOut() || !b.isLaidOut() || a.getWidth()==0 || b.getWidth()==0){root.postOnAnimation(this::calibrateLaidOut);return;}
+        Profile p=AppState.profile;
         synchronized(p){Rect display=getSystemService(WindowManager.class).getMaximumWindowMetrics().getBounds();p.setGeometry(display.width(),display.height(),getDisplay().getRotation());p.targetPackage=getPackageName();Rect ra=area(a),rb=area(b);p.a=new Point(ra.centerX(),ra.centerY());p.b=new Point(rb.centerX(),rb.centerY());p.roi=null;p.template=null;p.save(this);}
         render("preview");root.post(()->{CaptureService.register(area(completion));waitForCalibration(SystemClock.uptimeMillis()+5000);});
     }

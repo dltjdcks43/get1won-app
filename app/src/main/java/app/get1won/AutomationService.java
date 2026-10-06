@@ -11,15 +11,15 @@ import android.widget.*;
 public final class AutomationService extends AccessibilityService {
     private final Handler ui=new Handler(Looper.getMainLooper());
     private WindowManager wm;private LinearLayout panel;private TextView status;private Button toggle;
-    private View picker;private boolean bottom=true;private WindowManager.LayoutParams params;
+    private View picker,pulse;private boolean bottom=true,pulseLight;private WindowManager.LayoutParams params;
     private volatile Rect bounds;
     private volatile long frameGeneration=-1,frameCheckedAt;
     private volatile boolean frameTarget,frameWaiting=true;
     private String pendingSelection;private boolean pendingStart;private long pendingGeneration,pendingUntil;
-    @Override protected void onServiceConnected(){AppState.initialize(this);AppState.accessibility=this;wm=getSystemService(WindowManager.class);createPanel();ui.post(refresh);}
+    @Override protected void onServiceConnected(){AppState.initialize(this);AppState.accessibility=this;wm=getSystemService(WindowManager.class);createPanel();createPulse();ui.post(refresh);ui.post(refreshPulse);}
     @Override public void onAccessibilityEvent(AccessibilityEvent event){if(pendingSelection!=null || pendingStart)ui.post(this::handlePending);}
     @Override public void onInterrupt(){AppState.engine.pause("접근성 연결 중단");}
-    @Override public void onDestroy(){AppState.engine.pause("접근성 연결 종료");AppState.accessibility=null;ui.removeCallbacksAndMessages(null);if(picker!=null)wm.removeView(picker);if(panel!=null)wm.removeView(panel);super.onDestroy();}
+    @Override public void onDestroy(){AppState.engine.pause("접근성 연결 종료");AppState.accessibility=null;ui.removeCallbacksAndMessages(null);if(picker!=null)wm.removeView(picker);if(panel!=null)wm.removeView(panel);if(pulse!=null)wm.removeView(pulse);super.onDestroy();}
     public boolean targetVisible(){
         if(getSystemService(KeyguardManager.class).isKeyguardLocked())return false;
         if(getPackageName().equals(AppState.profile.targetPackage))return TestActivity.visible;
@@ -47,6 +47,19 @@ public final class AutomationService extends AccessibilityService {
     }
     void frameEvidence(long generation,boolean target,boolean waiting,long checkedAt){frameTarget=target;frameWaiting=waiting;frameCheckedAt=checkedAt;frameGeneration=generation;}
     private int dp(int value){return Math.round(value*getResources().getDisplayMetrics().density);}
+    private void createPulse(){
+        // A static display can stop producing ImageReader buffers. A tiny, non-interactive
+        // compositor heartbeat requests genuinely new frames, never reuses an old image.
+        pulse=new View(this);pulse.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+        WindowManager.LayoutParams p=new WindowManager.LayoutParams(2,2,WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE|WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE|WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,PixelFormat.TRANSLUCENT);
+        p.setFitInsetsTypes(0);p.gravity=Gravity.TOP|Gravity.END;pulse.setVisibility(View.GONE);wm.addView(pulse,p);
+    }
+    private final Runnable refreshPulse=new Runnable(){public void run(){
+        boolean needed=AppState.capturing && (AppState.engine.active() || CaptureService.registrationRect()!=null);
+        pulse.setVisibility(needed?View.VISIBLE:View.GONE);
+        if(needed){pulseLight=!pulseLight;pulse.setBackgroundColor(pulseLight?0xFF707070:0xFF808080);}
+        ui.postDelayed(this,33);
+    }};
     private Button button(String label,Runnable action){Button b=new Button(this);b.setText(label);b.setTextSize(11);b.setMinWidth(0);b.setMinimumWidth(0);b.setPadding(dp(5),0,dp(5),0);b.setOnClickListener(v->action.run());return b;}
     @android.annotation.SuppressLint("RtlHardcoded") // Raw display coordinates must always use the physical left edge.
     private void createPanel(){

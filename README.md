@@ -68,3 +68,5 @@ CI는 push/pull_request/workflow_dispatch에서 unit test, lint, assembleDebug�
 [코드 리뷰와 변경 근거](docs/review-v2.md) · [영상 참고 분석](docs/video-analysis.md)
 
 공식 API 기준: [MediaProjection](https://developer.android.com/media/grow/media-projection), [AccessibilityService](https://developer.android.com/reference/android/accessibilityservice/AccessibilityService).
+
+정지 화면에서 캡처 프레임이 끊기지 않도록 실행/등록 중에는 화면 모서리의 2×2픽셀 표시를 33ms마다 갱신합니다. 이 비대화형 표시는 안정화 분석에서 제외되는 상태 표시줄 영역에 있습니다. 반복 동작을 예약하거나 오래된 프레임을 재사용하는 기능이 아닙니다. 접근성 정보 조회는 엔진 잠금 밖에서 수행하며 조회 후 250ms보다 오래된 이미지는 폐기합니다.
