@@ -28,4 +28,10 @@ public class EngineTest {
  @Test public void completionLimitWaitsForHomeReturn(){e.start(now,1,"target");ack(frame(home()),1);ack(frame(reward(true,false)),2);ack(frame(home()),3);ack(frame(history()),4);assertEquals(0,e.completed);assertNull(frame(home()));assertEquals(1,e.completed);assertEquals(Engine.State.IDLE,e.state);assertArrayEquals(new long[]{1,1,1,1},e.actions);}
  @Test public void staleUndispatchedReservationCanBeReobserved(){start();var old=frame(reward(true,false));e.abandon(old);assertFalse(e.valid(old));e.acknowledge(old,true,now);assertEquals(0,e.actions[1]);ack(frame(reward(true,false)),2);assertEquals(1,e.actions[1]);}
  @Test public void abandonedHistoryActionStillNeedsHistory(){start();ack(frame(reward(true,false)),2);ack(frame(home()),3);var old=frame(history());e.abandon(old);assertNull(frame(home()));assertEquals(0,e.actions[3]);ack(frame(history()),4);}
+ @Test public void incompleteAccessibilityWaitsForOcrHome(){
+  e.start(now,1,"target");now+=10_000_000L;
+  assertNull(e.frame(new Engine.Frame(e.generation(),now,"target",reward(false,false),false)));
+  assertEquals(Engine.State.WAIT_HOME,e.state);assertArrayEquals(new long[]{0,0,0,0},e.actions);
+  ack(frame(home()),1);assertEquals(Engine.State.WAIT_REWARD_COMPLETE,e.state);
+ }
 }
