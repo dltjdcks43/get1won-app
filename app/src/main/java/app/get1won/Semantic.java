@@ -22,7 +22,7 @@ public final class Semantic {
         public boolean reward(){return complete!=null || waiting!=null;}
     }
     private static boolean points(String t){return CompletionText.normalize(t).equals("내포인트");}
-    private static boolean anchor(String t){String s=CompletionText.normalize(t);return s.contains("구경하고") && s.contains("1원받아요");}
+    private static boolean anchor(String t){String s=CompletionText.normalize(t);return s.contains("구경") && s.contains("1원") && s.contains("받");}
     private static Node unique(Scene s,java.util.function.Predicate<String> match){
         Node found=null;
         for(Node n:s.nodes)if(n.enabled && n.box.valid() && match.test(n.text)){
@@ -54,6 +54,24 @@ public final class Semantic {
         for(int depth=0;depth<40 && n!=null;depth++,n=s.byId(n.parent))if(n.id==parent.id)return true;
         return false;
     }
+    private static Node ocrAd(Scene s,Node anchor){
+        List<Node> nearby=new ArrayList<>();
+        for(Node n:s.nodes){
+            if(!n.enabled || !"OCR".equals(n.source) || n.text.isBlank() || !n.box.valid() || !s.screen.contains(n.box))continue;
+            int gap=n.box.top-anchor.box.bottom;
+            if(gap<0 || gap>Math.min(s.screen.height()/8,anchor.box.height()*4))continue;
+            if(n.box.width()<anchor.box.width()/4 || n.box.height()>s.screen.height()/5 || n.box.right<=anchor.box.left || n.box.left>=anchor.box.right)continue;
+            nearby.add(n);
+        }
+        // Nested OCR lines and blocks describe the same content; retain the full block.
+        nearby.removeIf(n->nearby.stream().anyMatch(o->o!=n && o.box.contains(n.box) && (!o.box.equals(n.box) || o.id<n.id)));
+        nearby.sort(Comparator.comparingInt(n->n.box.top));
+        if(nearby.isEmpty())return null;Node first=nearby.get(0);
+        if(nearby.size()>1 && nearby.get(1).box.top<first.box.bottom)return null;
+        String t=CompletionText.normalize(first.text);
+        if(t.length()<4 || t.contains("1원") || t.contains("내포인트") || t.contains("출금") || t.contains("동의") || t.contains("알림") || anchor(t))return null;
+        return first; // Nonclickable OCR node: the platform adapter taps this observed box.
+    }
     public static Node ad(Scene s,Node anchor){
         if(anchor==null)return null;List<Node> candidates=new ArrayList<>();
         for(Node n:s.nodes){
@@ -70,7 +88,7 @@ public final class Semantic {
         // Nested clickable children represent one card; use the outer complete card.
         candidates.removeIf(n->candidates.stream().anyMatch(other->other!=n && other.box.contains(n.box) && descendant(s,n,other)));
         candidates.sort(Comparator.comparingInt(n->n.box.top));
-        if(candidates.isEmpty())return null;
+        if(candidates.isEmpty())return ocrAd(s,anchor);
         Node best=candidates.get(0);
         if(candidates.size()>1 && candidates.get(1).box.top<best.box.bottom)return null;
         // Text and card must share a meaningful subtree when both expose hierarchy.

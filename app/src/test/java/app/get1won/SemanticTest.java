@@ -19,7 +19,7 @@ public class SemanticTest {
  @Test public void ocrAnchorUsesActualAccessibleCard(){var ns=home();ns.set(4,new Semantic.Node(4,-1,"다시 구경하고 1원 받아요",b(20,800,900,900),false,true,"OCR"));assertEquals(5,Semantic.inspect(scene(ns)).ad().id());}
  @Test public void duplicateUnrelatedAnchorsAreAmbiguous(){var ns=home();ns.add(n(6,0,"다시 혜택 구경하고 1원 받아요",b(20,1500,980,1600),false));assertNull(Semantic.inspect(scene(ns)).anchor());}
  @Test public void anchorAcceptsViewingRewardPhrasesAndWhitespace(){
-  for(String phrase:List.of("다시 구경하고 1원 받아요","다시 혜택 구경하고 1원 받아요","여기서 혜택 구경하고 1원 받아요")){
+  for(String phrase:List.of("다시 구경하고 1원 받아요","다시 혜택 구경하고 1원 받아요","여기서 혜택 구경하고 1원 받아요","여기서 구경하면 1원 받아요","한번 더 구경하고 1원 받아요")){
    for(String text:List.of(phrase,phrase.replace(" ","\n  "))){
     var ns=home();ns.set(4,n(4,0,text,b(20,800,900,900),false));var f=Semantic.inspect(scene(ns));
     assertNotNull(text,f.anchor());assertTrue(text,f.home());assertEquals(5,f.ad().id());
@@ -27,9 +27,20 @@ public class SemanticTest {
   }
  }
  @Test public void anchorRejectsOtherOneWonEvents(){
-  for(String text:List.of("쿠폰 혜택 알림 동의하고 1원 받기","동의문 10초 만에 동의하고 1원 받기","매장 혜택 소식 받고 1원 받기")){
+  for(String text:List.of("1원 받고 혜택 알림 켜기","쿠폰 혜택 알림 동의하고 1원 받기","동의문 10초 만에 동의하고 1원 받기","매장 혜택 소식 받고 1원 받기")){
    var ns=home();ns.set(4,n(4,0,text,b(20,800,900,900),false));var f=Semantic.inspect(scene(ns));
    assertNull(text,f.anchor());assertFalse(text,f.home());assertNull(text,f.ad());
   }
+ }
+ @Test public void missingClickableCardUsesNearbyOcrTitle(){
+  var ns=home();ns.set(5,new Semantic.Node(5,-1,"매번 다른 광고 상품 제목",b(80,950,900,1050),false,true,"OCR"));
+  var f=Semantic.inspect(scene(ns));assertEquals(5,f.ad().id());assertFalse(f.ad().clickable());
+ }
+ @Test public void ocrAdRejectsOtherEventsAndAmbiguousBoxes(){
+  var ns=home();ns.set(5,new Semantic.Node(5,-1,"알림 동의하고 1원 받기",b(80,950,900,1050),false,true,"OCR"));assertNull(Semantic.inspect(scene(ns)).ad());
+  ns.set(5,new Semantic.Node(5,-1,"광고 상품 제목",b(20,950,450,1050),false,true,"OCR"));ns.add(new Semantic.Node(6,-1,"다른 상품 제목",b(460,950,950,1050),false,true,"OCR"));assertNull(Semantic.inspect(scene(ns)).ad());
+ }
+ @Test public void pointsWithoutClickableParentUsesObservedOcrBox(){
+  var ns=home();ns.set(1,n(1,0,"",b(20,200,980,380),false));ns.set(2,new Semantic.Node(2,-1,"내 포인트",b(30,210,500,270),false,true,"OCR"));assertEquals(ns.get(2),Semantic.inspect(scene(ns)).pointsTarget());
  }
 }

@@ -114,11 +114,13 @@ public final class AutomationService extends AccessibilityService {
             boolean missing=needsOcr(found);
             if(missing && !AppState.capturing){wanted=null;AppState.engine.pause("화면 확인이 필요해요. 앱에서 다시 사용 시작을 눌러주세요.");return;}
             if(missing)requestOcr(s,found);else wanted=null;
+            if(missing && found.home() && (AppState.engine.state==Engine.State.WAIT_HOME || AppState.engine.state==Engine.State.WAIT_HOME_AFTER_POINTS))return;
             decide(s,found,!missing);
         }catch(Exception ex){wanted=null;AppState.engine.fail("화면 분석을 멈췄어요. 다시 시작해주세요.");AppState.log(ex.toString());}
     };
     private boolean needsOcr(Semantic.Found f){return switch(AppState.engine.state){
-        case WAIT_HOME,WAIT_HOME_AFTER_REWARD,WAIT_HOME_AFTER_POINTS->!f.home();
+        case WAIT_HOME,WAIT_HOME_AFTER_POINTS->!f.home() || f.ad()==null;
+        case WAIT_HOME_AFTER_REWARD->!f.home();
         case WAIT_REWARD_COMPLETE->f.complete()==null && f.waiting()==null;
         case WAIT_POINTS_HISTORY->!f.history();default->false;
     };}

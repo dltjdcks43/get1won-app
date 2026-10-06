@@ -14,6 +14,7 @@ public final class TestActivity extends Activity {
     public static TestActivity current(){return instance.get();}
     private final Handler ui=new Handler(Looper.getMainLooper());private final Random random=new Random(20261006L);
     final TestAudit audit=new TestAudit();private FrameLayout root;private String screen="home";private boolean received,transitioning;private long token;
+    boolean smokeThree;
     boolean hideCompletionAccessibility,hideAllText,ambiguous,wrongHistory;int historyClicks;long shownAt,backAt;
     private final android.window.OnBackInvokedCallback back=this::back;
     private int dp(int n){return Math.round(n*getResources().getDisplayMetrics().density);}
@@ -38,9 +39,13 @@ public final class TestActivity extends Activity {
         root=new FrameLayout(this);root.setBackgroundColor(0xFFF4F8FF);setContentView(root);
         if(next.equals("home")){
             place(card("내 포인트",String.format(java.util.Locale.KOREA,"%,d원",4300+audit.normal),Color.WHITE,()->{observe(3);transition("history",false);}),.12f,95);
-            place(text(audit.normal%2==0?"다시 혜택 구경하고\n1원 받아요":"다시 구경하고 1원 받아요",22),.40f,76);
+            place(text(smokeThree?new String[]{"다시 구경하고 1원 받아요","여기서 혜택 구경하고 1원 받아요","여기서 구경하면 1원 받아요"}[Math.min(audit.normal,2)]:audit.normal%2==0?"다시 혜택 구경하고\n1원 받아요":"다시 구경하고 1원 받아요",22),.40f,76);
             int shade=Color.rgb(180+random.nextInt(60),180+random.nextInt(60),180+random.nextInt(60));
+            boolean savedHide=hideAllText;if(smokeThree && audit.normal>0)hideAllText=true;
             LinearLayout ad=card("상품 "+audit.normal+" · "+new String[]{"여행","음악","생활","건강"}[audit.normal%4],"AD · 새로운 혜택을 확인하세요",shade,()->{observe(1);received=false;transition("detail",false);});
+            hideAllText=savedHide;
+            if(smokeThree && audit.normal>0)ad.setAccessibilityDelegate(new View.AccessibilityDelegate(){@Override public void onInitializeAccessibilityNodeInfo(View host,android.view.accessibility.AccessibilityNodeInfo info){super.onInitializeAccessibilityNodeInfo(host,info);info.setClickable(false);info.removeAction(android.view.accessibility.AccessibilityNodeInfo.AccessibilityAction.ACTION_CLICK);}});
+            if(smokeThree){Button event=new Button(this);event.setText("알림 동의하고 1원 받기");event.setOnClickListener(v->historyClicks++);place(event,.78f,60);}
             // Different drawn icon each cycle; not exposed as the semantic anchor.
             View icon=new View(this){final Paint p=new Paint();@Override protected void onDraw(Canvas c){p.setColor(shade^0x00404040);c.drawCircle(getWidth()/2f,getHeight()/2f,Math.min(getWidth(),getHeight())/3f,p);}};ad.addView(icon,new LinearLayout.LayoutParams(-1,dp(20)));place(ad,.52f,120);
             if(ambiguous){Button other=new Button(this);other.setText("다른 광고");other.setOnClickListener(v->historyClicks++);place(other,.53f,80);}
@@ -54,7 +59,7 @@ public final class TestActivity extends Activity {
             for(int k=0;k<3;k++){LinearLayout row=card(wrongHistory?"관련 없는 항목":"광고 보고 1원 받기","1원",Color.WHITE,()->historyClicks++);place(row,.25f+k*.12f,80);}
         }
     }
-    private void observe(int step){audit.action(step,received,transitioning,!AppState.engine.active());}
+    private void observe(int step){audit.action(step,received,transitioning,!AppState.engine.active());if(smokeThree)android.util.Log.i("ThreeCycle", "cycle="+(audit.normal+1)+" step="+step+" completion="+received+" "+audit.summary());}
     private void back(){
         if(transitioning){observe(screen.equals("detail")?2:4);return;}
         if(screen.equals("detail")){backAt=System.nanoTime();observe(2);transition("home",false);}
