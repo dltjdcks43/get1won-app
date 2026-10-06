@@ -49,7 +49,7 @@ public final class CaptureService extends Service {
     private final DisplayManager.DisplayListener displayListener=new DisplayManager.DisplayListener(){public void onDisplayAdded(int id){}public void onDisplayRemoved(int id){if(id==Display.DEFAULT_DISPLAY)invalidateGeometry();}public void onDisplayChanged(int id){if(id==Display.DEFAULT_DISPLAY){Rect b=getSystemService(WindowManager.class).getMaximumWindowMetrics().getBounds();if(b.width()!=width || b.height()!=height || getSystemService(DisplayManager.class).getDisplay(id).getRotation()!=rotation)invalidateGeometry();}}};
     private void invalidateGeometry(){if(closing)return;AppState.engine.pause("화면 크기가 바뀌었어요. 화면 확인을 다시 허용해주세요.");stopSelf();}
     private Bitmap sample(Image image,Rect region,Rect overlay){
-        float scale=Math.min(1f,1080f/region.width());int w=Math.max(1,Math.round(region.width()*scale)),h=Math.max(1,Math.round(region.height()*scale));
+        float scale=Math.min(1f,900f/region.width());int w=Math.max(1,Math.round(region.width()*scale)),h=Math.max(1,Math.round(region.height()*scale));
         int[] pixels=new int[w*h];Image.Plane plane=image.getPlanes()[0];ByteBuffer data=plane.getBuffer();
         for(int y=0;y<h;y++)for(int x=0;x<w;x++){
             int px=Math.min(region.right-1,region.left+(int)((x+.5f)*region.width()/w)),py=Math.min(region.bottom-1,region.top+(int)((y+.5f)*region.height()/h));

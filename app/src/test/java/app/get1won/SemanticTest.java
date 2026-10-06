@@ -10,6 +10,7 @@ public class SemanticTest {
  @Test public void selectsCardAndPointsContainer(){var f=Semantic.inspect(scene(home()));assertTrue(f.home());assertEquals(5,f.ad().id());assertEquals(1,f.pointsTarget().id());}
  @Test public void changingProductAndAmountDoNotChangeSelection(){for(int i=0;i<100;i++){var ns=home();ns.set(3,n(3,1,i+"원",b(30,280,500,350),false));ns.set(5,n(5,0,"브랜드"+i,b(20,950,980,1150),true));assertEquals(5,Semantic.inspect(scene(ns)).ad().id());}}
  @Test public void twoCardsAtSameHeightAreAmbiguous(){var ns=home();ns.add(n(6,0,"두번째",b(10,960,990,1170),true));assertNull(Semantic.inspect(scene(ns)).ad());}
+ @Test public void containedSiblingStillAmbiguous(){var ns=home();ns.add(n(6,0,"다른 카드",b(30,970,900,1050),true));assertNull(Semantic.inspect(scene(ns)).ad());}
  @Test public void nestedChildDoesNotBecomeSecondCard(){var ns=home();ns.add(n(6,5,"상품",b(30,970,900,1050),true));assertEquals(5,Semantic.inspect(scene(ns)).ad().id());}
  @Test public void otherButtonsAboveAnchorAreIgnored(){var ns=home();ns.add(n(6,0,"출금",b(600,250,900,350),true));assertEquals(5,Semantic.inspect(scene(ns)).ad().id());}
  @Test public void historyRowsAreNeverCards(){var ns=home();ns.set(5,n(5,0,"광고 보고 1원 받기",b(20,950,980,1150),true));assertNull(Semantic.inspect(scene(ns)).ad());}

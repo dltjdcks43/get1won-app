@@ -49,6 +49,11 @@ public final class Semantic {
         for(Node c:s.nodes)if(c.enabled && c.clickable && c.box.contains(n.box) && c.box.height()<s.screen.height()/2 && (best==null || c.box.width()*c.box.height()<best.box.width()*best.box.height()))best=c;
         return best!=null?best:n;
     }
+    private static boolean descendant(Scene s,Node child,Node parent){
+        Node n=s.byId(child.parent);
+        for(int depth=0;depth<40 && n!=null;depth++,n=s.byId(n.parent))if(n.id==parent.id)return true;
+        return false;
+    }
     public static Node ad(Scene s,Node anchor){
         if(anchor==null)return null;List<Node> candidates=new ArrayList<>();
         for(Node n:s.nodes){
@@ -63,7 +68,7 @@ public final class Semantic {
             candidates.add(n);
         }
         // Nested clickable children represent one card; use the outer complete card.
-        candidates.removeIf(n->candidates.stream().anyMatch(other->other!=n && other.box.contains(n.box) && !other.box.equals(n.box)));
+        candidates.removeIf(n->candidates.stream().anyMatch(other->other!=n && other.box.contains(n.box) && descendant(s,n,other)));
         candidates.sort(Comparator.comparingInt(n->n.box.top));
         if(candidates.isEmpty())return null;
         Node best=candidates.get(0);

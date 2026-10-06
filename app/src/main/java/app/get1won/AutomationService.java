@@ -18,9 +18,9 @@ public final class AutomationService extends AccessibilityService {
     private WindowManager.LayoutParams params; private boolean bottom=true; private int appliedSize=-1;
     private volatile Rect panelBounds; private volatile List<Rect> protectedBounds=List.of();
     private final AtomicLong revision=new AtomicLong();
-    private volatile Snapshot latest; private volatile boolean diagnostic; private volatile String analysis="아직 분석하지 않았어요.";
+    private volatile Snapshot latest; private volatile boolean diagnostic,diagnosticPending; private volatile String analysis="아직 분석하지 않았어요.";
     private long scannedRevision=-1,scannedAt; private int screenW,screenH,rotation;
-    private View pulse; private boolean pulseLight;
+    private View pulse; private boolean pulseLight; private Rect waitingRegion; private long waitingCycle=-1; private int ocrAttempts;
     record Snapshot(long generation,long time,long revision,int windowId,String pkg,Semantic.Scene scene,Map<Integer,AccessibilityNodeInfo> handles){}
     record OcrRequest(long generation,long cycle,Engine.State state,long revision,int windowId,String pkg,long after,Rect region){}
     private volatile OcrRequest wanted;
@@ -50,31 +50,38 @@ public final class AutomationService extends AccessibilityService {
         // Read at the user's START tap, not a saved registration or an app launch.
         AccessibilityNodeInfo root=getRootInActiveWindow();
         String pkg=root==null?"":String.valueOf(root.getPackageName());
-        AppState.stop();wanted=null;diagnostic=false;
+        AppState.stop();wanted=null;diagnostic=false;diagnosticPending=false;
         if(pkg.isEmpty() || getSystemService(KeyguardManager.class).isKeyguardLocked() || (pkg.equals(getPackageName()) && !TestActivity.visible)){
             AppState.engine.pause("시작할 화면을 찾지 못했어요. 포인트 화면을 열고 다시 시작해주세요.");return;
         }
         AppState.engine.start(System.nanoTime(),AppState.profile.repeats,pkg);revision.incrementAndGet();worker.post(scan);
     }
     public void prepareAnalysis(){AppState.stop();wanted=null;diagnostic=true;analysis="원하는 화면을 열고 조작창의 분석을 눌러주세요.";}
-    private void analyzeNow(){worker.post(()->{Snapshot s=read();if(s!=null){latest=s;updateAnalysis(s.scene);requestOcr(s,Semantic.inspect(s.scene));}diagnostic=false;});}
+    private void analyzeNow(){worker.post(()->{Snapshot s=read();if(s!=null){latest=s;updateAnalysis(s.scene);diagnosticPending=AppState.capturing;requestOcr(s,Semantic.inspect(s.scene));}diagnostic=false;});}
     private Snapshot read(){
         long gen=AppState.engine.generation(),rev=revision.get(),now=System.nanoTime();
         AccessibilityNodeInfo root=getRootInActiveWindow();if(root==null)return null;
         List<Semantic.Node> nodes=new ArrayList<>();Map<Integer,AccessibilityNodeInfo> handles=new HashMap<>();
         Rect display=wm.getMaximumWindowMetrics().getBounds();
-        walk(root,-1,nodes,handles,display,0);
+        if(AppState.engine.state==Engine.State.WAIT_REWARD_COMPLETE){
+            // Completion event fast path: only the reward phrases, no full tree walk.
+            for(String query:new String[]{"받았어요","구경"})for(AccessibilityNodeInfo n:root.findAccessibilityNodeInfosByText(query))append(n,-1,nodes,handles,display);
+        }else walk(root,-1,nodes,handles,display,0);
         return new Snapshot(gen,now,rev,root.getWindowId(),String.valueOf(root.getPackageName()),new Semantic.Scene(nodes,box(display)),handles);
     }
     private void walk(AccessibilityNodeInfo n,int parent,List<Semantic.Node> nodes,Map<Integer,AccessibilityNodeInfo> handles,Rect display,int depth){
         if(n==null || depth>40 || nodes.size()>1500)return;
+        int id=append(n,parent,nodes,handles,display);
+        for(int k=0;k<n.getChildCount();k++)walk(n.getChild(k),id,nodes,handles,display,depth+1);
+    }
+    private int append(AccessibilityNodeInfo n,int parent,List<Semantic.Node> nodes,Map<Integer,AccessibilityNodeInfo> handles,Rect display){
         Rect r=new Rect();n.getBoundsInScreen(r);int id=nodes.size();
         boolean visible=n.isVisibleToUser() && !r.isEmpty() && Rect.intersects(r,display);
         String text=n.getText()!=null?n.getText().toString():n.getContentDescription()!=null?n.getContentDescription().toString():"";
         // Keep containers for hierarchy; nonvisible text never counts as evidence.
         nodes.add(new Semantic.Node(id,parent,visible?text:"",box(r),visible && n.isClickable(),visible && n.isEnabled(),"Accessibility"));
         handles.put(id,n);
-        for(int k=0;k<n.getChildCount();k++)walk(n.getChild(k),id,nodes,handles,display,depth+1);
+        return id;
     }
     private final Runnable scan=()->{
         if(!AppState.engine.active())return;
@@ -85,6 +92,8 @@ public final class AutomationService extends AccessibilityService {
                 wanted=null;AppState.engine.pause("다른 앱으로 이동해서 잠시 멈췄어요.");return;
             }
             Semantic.Found found=Semantic.inspect(s.scene);
+            if(waitingCycle!=AppState.engine.cycleId){waitingCycle=AppState.engine.cycleId;waitingRegion=null;ocrAttempts=0;}
+            if(found.waiting()!=null)waitingRegion=rect(found.waiting().box());
             boolean missing=needsOcr(found);
             if(missing && AppState.capturing)requestOcr(s,found);else wanted=null;
             decide(s,found,!missing || !AppState.capturing);
@@ -99,8 +108,8 @@ public final class AutomationService extends AccessibilityService {
         if(!AppState.capturing)return;
         Rect region=rect(s.scene.screen());
         // A real waiting bubble supplies a dynamic crop. Otherwise analyze downsampled content.
-        if(AppState.engine.state==Engine.State.WAIT_REWARD_COMPLETE && f.waiting()!=null){
-            region=rect(f.waiting().box());int pad=Math.max(region.height(),dp(16));region.inset(-pad,-pad);if(!region.intersect(rect(s.scene.screen())))return;
+        if(AppState.engine.state==Engine.State.WAIT_REWARD_COMPLETE && waitingRegion!=null && ++ocrAttempts%4!=0){
+            region=new Rect(waitingRegion);int pad=Math.max(region.height(),dp(16));region.inset(-pad,-pad);if(!region.intersect(rect(s.scene.screen())))return;
         }
         wanted=new OcrRequest(s.generation,AppState.engine.cycleId,AppState.engine.state,s.revision,s.windowId,s.pkg,s.time,region);
     }
@@ -113,7 +122,7 @@ public final class AutomationService extends AccessibilityService {
             for(Semantic.Node n:text)combined.add(new Semantic.Node(id++,-1,n.text(),n.box(),false,true,"OCR"));
             Semantic.Scene scene=new Semantic.Scene(combined,fresh.scene.screen());
             Snapshot merged=new Snapshot(fresh.generation,System.nanoTime(),fresh.revision,fresh.windowId,fresh.pkg,scene,fresh.handles);
-            latest=merged;updateAnalysis(scene);
+            latest=merged;updateAnalysis(scene);diagnosticPending=false;wanted=null;
             if(AppState.engine.active())decide(merged,Semantic.inspect(scene),true);
         });
     }
@@ -125,7 +134,9 @@ public final class AutomationService extends AccessibilityService {
         Semantic.Node next=switch(AppState.engine.state){case WAIT_HOME,WAIT_HOME_AFTER_POINTS->f.ad();case WAIT_HOME_AFTER_REWARD->f.pointsTarget();case WAIT_REWARD_COMPLETE->f.complete()!=null?f.complete():f.waiting();default->null;};
         if(next!=null)protect.add(rect(next.box()));protectedBounds=List.copyOf(protect);
         Rect overlay=panelBounds;
-        if(next!=null && overlay!=null && Rect.intersects(overlay,rect(next.box()))){ui.post(this::placePanel);return;}
+        if(next!=null && overlay!=null && Rect.intersects(overlay,rect(next.box()))){
+            ui.post(()->{placePanel();Rect moved=panelBounds;if(moved!=null && !Rect.intersects(moved,rect(next.box())))worker.post(()->{if(System.nanoTime()-s.time<250_000_000L)decide(s,f,definitive);});});return;
+        }
         Engine.Effect effect=AppState.engine.frame(new Engine.Frame(s.generation,s.time,s.pkg,f,definitive));
         if(effect==null)return;
         // No delay, posting, or multi-frame confirmation between first completion decision and BACK.
@@ -160,7 +171,8 @@ public final class AutomationService extends AccessibilityService {
         if(AppState.accessibility!=AutomationService.this)return;
         AppState.engine.tick(System.nanoTime());
         if(AppState.engine.active() && (revision.get()!=scannedRevision || System.nanoTime()-scannedAt>250_000_000L))scan.run();
-        if(!AppState.engine.active())wanted=null;
+        if(wanted!=null && wanted.generation()!=AppState.engine.generation()){wanted=null;diagnosticPending=false;}
+        if(!AppState.engine.active() && !diagnosticPending)wanted=null;
         worker.postDelayed(this,50);
     }};
     private Button button(String label,Runnable run){Button b=new Button(this);b.setText(label);b.setContentDescription(label);b.setAllCaps(false);b.setMinWidth(0);b.setMinimumWidth(0);b.setOnClickListener(v->run.run());return b;}
