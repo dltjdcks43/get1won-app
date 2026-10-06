@@ -8,7 +8,7 @@ import org.json.*;
 import java.io.*;
 import java.nio.ByteBuffer;
 
-/** Exactly three user calibration inputs: A, B, completion template. */
+/** Two positions plus automatic text verification or an optional completion image. */
 public final class Profile {
     public static final int SAMPLE_W=160,SAMPLE_H=48;
     public Point a,b;

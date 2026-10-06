@@ -9,7 +9,7 @@ public final class AppState {
     @android.annotation.SuppressLint("StaticFieldLeak")
     public static volatile AutomationService accessibility;
     public static volatile boolean capturing;
-    public static volatile String notice="사용할 앱 화면에서 세 항목을 지정하세요";
+    public static volatile String notice="처음 설정하기를 눌러주세요.";
     private static boolean loaded;
     private static final Object logLock=new Object();
     private static final ArrayDeque<String> logs=new ArrayDeque<>();

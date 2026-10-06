@@ -82,7 +82,7 @@ public final class AutomationService extends AccessibilityService {
     }};
     private float scale(){return new float[]{1f,1.2f,1.4f,1.65f}[AppState.profile.panelSize];}
     private Button button(String label,Runnable action){Button b=new Button(this);b.setText(label);b.setContentDescription(label);b.setAllCaps(false);b.setMinWidth(0);b.setMinimumWidth(0);b.setOnClickListener(v->action.run());return b;}
-    @android.annotation.SuppressLint("RtlHardcoded")
+    @android.annotation.SuppressLint({"RtlHardcoded","ClickableViewAccessibility"}) // The anonymous status view overrides performClick below.
     private void createPanel(){
         panel=new LinearLayout(this);panel.setOrientation(LinearLayout.VERTICAL);panel.setBackgroundColor(0xFAFFFFFF);
         status=new TextView(this){@Override public boolean performClick(){super.performClick();return true;}};status.setTextColor(Color.BLACK);status.setContentDescription("조작창 안내. 잡고 움직이면 위치를 옮길 수 있어요.");panel.addView(status);
@@ -94,7 +94,7 @@ public final class AutomationService extends AccessibilityService {
         params=new WindowManager.LayoutParams(dp(336),-2,WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE|WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,PixelFormat.TRANSLUCENT);
         params.setFitInsetsTypes(0);params.gravity=Gravity.TOP|Gravity.LEFT;panel.setVisibility(View.GONE);wm.addView(panel,params);resizePanel();
     }
-    void resizePanel(){if(panel==null)return;float s=scale();appliedSize=AppState.profile.panelSize;status.setTextSize(13*s);panel.setPadding(dp(Math.round(8*s)),dp(Math.round(8*s)),dp(Math.round(8*s)),dp(Math.round(6*s)));for(Button b:new Button[]{toggle,stopButton,moveButton}){b.setTextSize(13*s);b.setMinimumHeight(dp(Math.max(48,Math.round(40*s))));b.setMinHeight(dp(Math.max(48,Math.round(40*s))));b.setPadding(dp(Math.round(6*s)),dp(Math.round(4*s)),dp(Math.round(6*s)),dp(Math.round(4*s)));}params.width=Math.min(dp(Math.round(240*s)),wm.getMaximumWindowMetrics().getBounds().width()-dp(16));wm.updateViewLayout(panel,params);manuallyPlaced=false;}
+    void resizePanel(){if(panel==null)return;float s=scale();appliedSize=AppState.profile.panelSize;status.setTextSize(13*s);panel.setPadding(dp(Math.round(8*s)),dp(Math.round(8*s)),dp(Math.round(8*s)),dp(Math.round(6*s)));for(Button b:new Button[]{toggle,stopButton,moveButton}){b.setTextSize(13*s);b.setMinimumHeight(dp(Math.max(48,Math.round(40*s))));b.setMinHeight(dp(Math.max(48,Math.round(40*s))));b.setPadding(dp(Math.round(6*s)),dp(Math.round(4*s)),dp(Math.round(6*s)),dp(Math.round(4*s)));LinearLayout.LayoutParams buttonParams=(LinearLayout.LayoutParams)b.getLayoutParams();buttonParams.setMarginEnd(b==moveButton?0:dp(Math.round(4*s)));b.setLayoutParams(buttonParams);}params.width=Math.min(dp(Math.round(240*s)),wm.getMaximumWindowMetrics().getBounds().width()-dp(16));wm.updateViewLayout(panel,params);manuallyPlaced=false;}
     public Rect overlayBounds(){return bounds;}
     View controls(){return panel;}
     private boolean overlaps(Rect box){synchronized(AppState.profile){Profile p=AppState.profile;return (p.a!=null && box.contains(p.a.x,p.a.y)) || (p.b!=null && box.contains(p.b.x,p.b.y)) || (p.roi!=null && Rect.intersects(box,p.roi)) || (completionBounds!=null && Rect.intersects(box,completionBounds));}}
@@ -116,25 +116,29 @@ public final class AutomationService extends AccessibilityService {
     void pick(String key){
         AppState.settingsChanged();removePicker();panel.setVisibility(View.GONE);bounds=null;
         final long generation=AppState.engine.generation();
-        picker=new View(this){
-            final Paint paint=new Paint(Paint.ANTI_ALIAS_FLAG);float x,y,ex,ey;boolean cancel;
-            @Override protected void onDraw(Canvas c){paint.setColor(0xEEFFFFFF);c.drawRect(0,getHeight()-dp(78),getWidth(),getHeight(),paint);paint.setColor(Color.BLACK);paint.setTextSize(dp(15));c.drawText(key.equals("completion")?"1원 받았어요 부분을 둘러주세요":"정할 위치를 한 번 눌러주세요",dp(10),getHeight()-dp(47),paint);c.drawText("취소: 아래 안내 영역 터치",dp(10),getHeight()-dp(20),paint);paint.setColor(Color.RED);paint.setStyle(Paint.Style.STROKE);paint.setStrokeWidth(dp(1));c.drawRect(Math.min(x,ex),Math.min(y,ey),Math.max(x,ex),Math.max(y,ey),paint);paint.setStyle(Paint.Style.FILL);}
+        FrameLayout layer=new FrameLayout(this);picker=layer;
+        View selection=new View(this){
+            final Paint paint=new Paint(Paint.ANTI_ALIAS_FLAG);float x,y,ex,ey;
+            @Override protected void onDraw(Canvas c){paint.setColor(Color.RED);paint.setStyle(Paint.Style.STROKE);paint.setStrokeWidth(dp(1));c.drawRect(Math.min(x,ex),Math.min(y,ey),Math.max(x,ex),Math.max(y,ey),paint);}
             @Override public boolean onTouchEvent(MotionEvent e){
-                if(e.getAction()==MotionEvent.ACTION_DOWN){x=ex=e.getRawX();y=ey=e.getRawY();cancel=y>getHeight()-dp(78);}
+                if(e.getAction()==MotionEvent.ACTION_DOWN){x=ex=e.getRawX();y=ey=e.getRawY();}
                 if(e.getAction()==MotionEvent.ACTION_MOVE){ex=e.getRawX();ey=e.getRawY();invalidate();}
-                if(e.getAction()==MotionEvent.ACTION_UP){performClick();if(cancel){removePicker();selectionSaved(generation);return true;}finishPick(key,(int)x,(int)y,(int)e.getRawX(),(int)e.getRawY(),generation);}
+                if(e.getAction()==MotionEvent.ACTION_UP){performClick();finishPick(key,(int)x,(int)y,(int)e.getRawX(),(int)e.getRawY(),generation);}
                 return true;
             }
             @Override public boolean performClick(){super.performClick();return true;}
         };
+        layer.addView(selection,new FrameLayout.LayoutParams(-1,-1));
+        TextView guide=new TextView(this);guide.setText((key.equals("completion")?"‘1원 받았어요’ 부분을 둘러주세요.":"정할 위치를 한 번 눌러주세요.")+"\n취소하려면 이 안내를 눌러주세요.");guide.setTextSize(20);guide.setTextColor(Color.BLACK);guide.setBackgroundColor(0xF5FFFFFF);guide.setPadding(dp(16),dp(12),dp(16),dp(36));guide.setMinimumHeight(dp(96));guide.setOnClickListener(v->{removePicker();selectionSaved(generation);});layer.addView(guide,new FrameLayout.LayoutParams(-1,-2,Gravity.BOTTOM));
         WindowManager.LayoutParams lp=new WindowManager.LayoutParams(-1,-1,WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE|WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN|WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,PixelFormat.TRANSLUCENT);
         lp.setFitInsetsTypes(0);lp.layoutInDisplayCutoutMode=WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS;lp.gravity=Gravity.TOP|Gravity.LEFT;wm.addView(picker,lp);
     }
     private void finishPick(String key,int x,int y,int ex,int ey,long generation){
+        AccessibilityNodeInfo target=getRootInActiveWindow();String pkg=target==null?"":String.valueOf(target.getPackageName());
         synchronized(AppState.engine){
             if(generation!=AppState.engine.generation()){removePicker();return;}
             removePicker();Rect screen=wm.getMaximumWindowMetrics().getBounds();int rotation=getSystemService(android.hardware.display.DisplayManager.class).getDisplay(Display.DEFAULT_DISPLAY).getRotation();
-            AccessibilityNodeInfo target=getRootInActiveWindow();String pkg=target==null?AppState.profile.targetPackage:String.valueOf(target.getPackageName());
+            if(!pkg.equals(AppState.profile.targetPackage)){AppState.notice="선택한 앱에서 위치를 다시 정해주세요.";selectionSaved(generation);return;}
             synchronized(AppState.profile){
                 Profile p=AppState.profile;p.setGeometry(screen.width(),screen.height(),rotation);if(!pkg.equals(p.targetPackage))p.invalidate();p.targetPackage=pkg;
                 if(key.equals("a"))p.a=new Point(x,y);else if(key.equals("b"))p.b=new Point(x,y);else{
@@ -151,7 +155,7 @@ public final class AutomationService extends AccessibilityService {
     private final Runnable refresh=new Runnable(){public void run(){
         if(panel==null)return;if(appliedSize!=AppState.profile.panelSize)resizePanel();
         boolean show=picker==null && (AppState.engine.active() || AppState.engine.state==Engine.State.PAUSED || preparing());panel.setVisibility(show?View.VISIBLE:View.GONE);
-        if(show){String line=probing?"완료 글자가 보이는 화면을 열어주세요.":startRequest.pending()?"사용할 앱을 열어주세요.":Engine.label(AppState.engine.state);String value="1원 받기\n"+line+"\n완료 "+AppState.engine.completed+"회";if(!value.contentEquals(status.getText()))status.setText(value);String label=probing?"완료 화면 알려주기":AppState.engine.state==Engine.State.PAUSED?"다시 계속":"잠시 멈춤";if(!label.contentEquals(toggle.getText()))toggle.setText(label);if(!placePanel()){AppState.engine.pause("조작창을 놓을 곳이 부족해요. 설정에서 크기를 줄여주세요.");startRequest.cancel();}}else bounds=null;
+        if(show){String line=probing?"완료 글자가 보이는 화면을 열어주세요.":startRequest.pending()?"사용할 앱을 열어주세요.":Engine.label(AppState.engine.state);String value="1원 받기\n"+line+"\n완료 "+AppState.engine.completed+"회";if(!value.contentEquals(status.getText())){status.setText(value);status.setContentDescription(value+". 잡고 움직이면 위치를 옮길 수 있어요.");}String label=probing?"직접 지정":AppState.engine.state==Engine.State.PAUSED?"다시 계속":"잠시 멈춤";if(!label.contentEquals(toggle.getText())){toggle.setText(label);toggle.setContentDescription(probing?"완료 화면 직접 지정하기":label);}if(!placePanel()){AppState.engine.pause("조작창을 놓을 곳이 부족해요. 설정에서 크기를 줄여주세요.");cancelSelection();AppState.notice="조작창을 놓을 곳이 부족해요. 설정에서 크기를 줄여주세요.";}}else bounds=null;
         ui.postDelayed(this,100);
     }};
 }

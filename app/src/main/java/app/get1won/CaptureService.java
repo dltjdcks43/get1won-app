@@ -60,7 +60,7 @@ public final class CaptureService extends Service {
         public void onDisplayAdded(int id){}public void onDisplayRemoved(int id){if(id==Display.DEFAULT_DISPLAY)invalidateGeometry();}
         public void onDisplayChanged(int id){if(id==Display.DEFAULT_DISPLAY){Rect b=getSystemService(WindowManager.class).getMaximumWindowMetrics().getBounds();int r=getSystemService(DisplayManager.class).getDisplay(id).getRotation();if(b.width()!=width || b.height()!=height || r!=rotation)invalidateGeometry();}}
     };
-    private void invalidateGeometry(){synchronized(AppState.engine){AppState.settingsChanged();synchronized(AppState.profile){AppState.profile.invalidate();AppState.profile.save(this);}AppState.notice="해상도/회전 변경 — 세 항목을 다시 지정하세요";}stopSelf();}
+    private void invalidateGeometry(){synchronized(AppState.engine){AppState.settingsChanged();synchronized(AppState.profile){AppState.profile.invalidate();AppState.profile.save(this);}AppState.notice="화면 크기가 바뀌었어요. 위치를 다시 정해주세요.";}stopSelf();}
     private final Runnable watchdog=new Runnable(){public void run(){if(closing)return;AppState.engine.tick(System.nanoTime());handler.postDelayed(this,100);}};
     private void sampleScreen(Image image,Rect roi,Rect overlay){
         Profile.sample(image,whole,screenBuffer,ScreenStability.WIDTH,ScreenStability.HEIGHT);
@@ -109,7 +109,7 @@ public final class CaptureService extends Service {
                 if(!target){AppState.engine.pause("지정한 앱 화면을 벗어났습니다");return;}
                 Profile p=AppState.profile;
                 synchronized(p){
-                    if(!p.ready() || !p.geometry(width,height,rotation)){AppState.engine.pause("세 항목을 다시 지정하세요");return;}
+                    if(!p.ready() || !p.geometry(width,height,rotation)){AppState.engine.pause("저장한 위치와 완료 화면을 다시 확인해주세요.");return;}
                     boolean completion=info.complete();
                     if(!completion && p.imageReady()){Profile.sample(image,p.roi,roiBuffer,Profile.SAMPLE_W,Profile.SAMPLE_H);completion=Matcher.score(roiBuffer,p.template,Profile.SAMPLE_W)>=.96;}
                     lastCompletion=completion;
