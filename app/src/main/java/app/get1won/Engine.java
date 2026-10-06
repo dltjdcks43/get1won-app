@@ -27,7 +27,7 @@ public final class Engine {
     public synchronized void fail(String why){pause(why);errors++;state=State.ERROR;}
     public synchronized void tick(long now){
         if(!active())return;
-        long timeout=state==State.WAIT_REWARD_COMPLETE?30_000_000_000L:10_000_000_000L;
+        long timeout=(state==State.WAIT_REWARD_COMPLETE || state==State.WAIT_HOME)?30_000_000_000L:10_000_000_000L;
         if(now-entered>=timeout){errors++;pause(state==State.WAIT_REWARD_COMPLETE?"완료 화면을 찾지 못했어요.":"포인트 화면을 찾지 못했어요. 처음 화면으로 돌아가 주세요.");}
     }
     private void change(State next,long now){state=next;entered=now;reason=label(next);port.log("cycle "+cycleId+" "+next);}

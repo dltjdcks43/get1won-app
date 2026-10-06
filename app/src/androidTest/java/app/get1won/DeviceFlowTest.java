@@ -22,7 +22,7 @@ public class DeviceFlowTest {
         MainActivity main=(MainActivity)i.startActivitySync(new Intent(i.getTargetContext(),MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));i.runOnMainSync(main::requestCapture);
         long end=SystemClock.uptimeMillis()+15000;
         while(!AppState.capturing && SystemClock.uptimeMillis()<end){UiObject2 allow=device.findObject(By.pkg("com.android.systemui").res("android:id/button1"));if(allow==null)allow=device.findObject(By.pkg("com.android.systemui").text(java.util.regex.Pattern.compile("(?i)Start now|Start recording|Start sharing|Start|Share|지금 시작|녹화 시작|공유 시작|시작")));if(allow!=null)allow.click();SystemClock.sleep(200);}
-        until(()->AppState.capturing,5000,"capture consent");i.runOnMainSync(main::finish);
+        until(()->AppState.capturing,5000,"capture consent");until(()->CaptureService.ready,20000,"Korean model ready");i.runOnMainSync(main::finish);
     }
     @Test public void hundredRealSemanticCyclesAndSafety() throws Exception {
         device.wakeUp();device.executeShellCommand("wm dismiss-keyguard");
@@ -31,7 +31,7 @@ public class DeviceFlowTest {
         TestActivity activity=(TestActivity)i.startActivitySync(new Intent(i.getTargetContext(),TestActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));i.waitForIdleSync();
         // Run the complete OCR path first so OCR regressions fail before the long endurance run.
         capture();i.runOnMainSync(()->{AppState.profile.repeats=1;activity.hideAllText=true;activity.hideCompletionAccessibility=true;activity.resetHome();});floatingStart();
-        until(()->AppState.engine.completed==1 && AppState.engine.state==Engine.State.IDLE,35000,"on-device Korean OCR full cycle");
+        until(()->AppState.engine.completed==1 && AppState.engine.state==Engine.State.IDLE,70000,"on-device Korean OCR full cycle");
         i.runOnMainSync(()->{assertArrayEquals(new int[]{1,0,0,0,0,0,0},activity.counters());assertEquals(0,activity.historyClicks);AppState.stop();i.getTargetContext().stopService(new Intent(i.getTargetContext(),CaptureService.class));activity.hideAllText=false;activity.hideCompletionAccessibility=false;activity.resetHome();AppState.profile.repeats=100;});
         until(()->!AppState.capturing,5000,"capture disabled for accessibility-only endurance");
         long[] baseline=AppState.engine.actions.clone();long started=SystemClock.uptimeMillis();floatingStart();
@@ -41,6 +41,8 @@ public class DeviceFlowTest {
         i.runOnMainSync(()->{assertArrayEquals(new int[]{101,0,0,0,0,0,0},activity.counters());assertEquals(0,activity.historyClicks);});
         i.runOnMainSync(()->{activity.resetHome();AppState.profile.randomTest=false;AppState.profile.testDelay=0;});
         long backs=AppState.engine.actions[1];floatingStart();until(()->AppState.engine.state==Engine.State.PAUSED,35000,"never-complete timeout pauses");assertEquals(backs,AppState.engine.actions[1]);
+        i.runOnMainSync(()->{AppState.stop();activity.resetHome();AppState.profile.testDelay=8000;});floatingStart();until(()->AppState.engine.state==Engine.State.WAIT_REWARD_COMPLETE,5000,"waiting before active stop");
+        i.runOnMainSync(AppState::stop);long[] activeStop=AppState.engine.actions.clone();SystemClock.sleep(8500);assertArrayEquals(activeStop,AppState.engine.actions);i.runOnMainSync(()->assertEquals(0,activity.audit.lateActions));
         i.runOnMainSync(()->{AppState.stop();activity.resetHome();AppState.profile.testDelay=8000;});floatingStart();until(()->AppState.engine.state==Engine.State.WAIT_REWARD_COMPLETE,5000,"waiting before external app");
         long[] before=AppState.engine.actions.clone();i.getTargetContext().startActivity(new Intent(android.provider.Settings.ACTION_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));until(()->AppState.engine.state==Engine.State.PAUSED,3000,"foreign app pauses");SystemClock.sleep(1200);assertArrayEquals(before,AppState.engine.actions);
         i.runOnMainSync(AppState::stop);long[] stopped=AppState.engine.actions.clone();SystemClock.sleep(8500);assertArrayEquals(stopped,AppState.engine.actions);

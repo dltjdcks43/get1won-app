@@ -21,9 +21,14 @@ public final class CaptureService extends Service {
     private ImageReader reader;private VirtualDisplay display;private int width,height,rotation;
     private volatile boolean closing;private boolean busy;private long lastStamp;
     private TextRecognizer recognizer;
+    public static volatile boolean ready;
     public static volatile String info="화면 확인이 꺼져 있어요.";
     @Override public IBinder onBind(Intent intent){return null;}
-    @Override public void onCreate(){super.onCreate();AppState.initialize(this);thread=new HandlerThread("KoreanOcrLatestFrame");thread.start();handler=new Handler(thread.getLooper());recognizer=TextRecognition.getClient(new KoreanTextRecognizerOptions.Builder().build());}
+    @Override public void onCreate(){super.onCreate();AppState.initialize(this);thread=new HandlerThread("KoreanOcrLatestFrame");thread.start();handler=new Handler(thread.getLooper());recognizer=TextRecognition.getClient(new KoreanTextRecognizerOptions.Builder().build());
+        ready=false;busy=true;info="한국어 인식을 준비하고 있어요.";
+        Bitmap warmup=Bitmap.createBitmap(64,64,Bitmap.Config.ARGB_8888);warmup.eraseColor(Color.WHITE);
+        recognizer.process(InputImage.fromBitmap(warmup,0)).addOnCompleteListener(task->handler.post(()->{warmup.recycle();busy=false;ready=task.isSuccessful();info=ready?"한국어 인식 준비됨":"한국어 인식을 준비하지 못했어요.";}));
+    }
     @Override public int onStartCommand(Intent intent,int flags,int startId){
         if(intent==null || "STOP".equals(intent.getAction())){AppState.stop();stopSelf();return START_NOT_STICKY;}
         if(projection!=null)return START_NOT_STICKY;
@@ -49,7 +54,7 @@ public final class CaptureService extends Service {
     private final DisplayManager.DisplayListener displayListener=new DisplayManager.DisplayListener(){public void onDisplayAdded(int id){}public void onDisplayRemoved(int id){if(id==Display.DEFAULT_DISPLAY)invalidateGeometry();}public void onDisplayChanged(int id){if(id==Display.DEFAULT_DISPLAY){Rect b=getSystemService(WindowManager.class).getMaximumWindowMetrics().getBounds();if(b.width()!=width || b.height()!=height || getSystemService(DisplayManager.class).getDisplay(id).getRotation()!=rotation)invalidateGeometry();}}};
     private void invalidateGeometry(){if(closing)return;AppState.engine.pause("화면 크기가 바뀌었어요. 화면 확인을 다시 허용해주세요.");stopSelf();}
     private Bitmap sample(Image image,Rect region,Rect overlay){
-        float scale=Math.min(1f,900f/region.width());int w=Math.max(1,Math.round(region.width()*scale)),h=Math.max(1,Math.round(region.height()*scale));
+        float scale=Math.min(1f,720f/region.width());int w=Math.max(1,Math.round(region.width()*scale)),h=Math.max(1,Math.round(region.height()*scale));
         int[] pixels=new int[w*h];Image.Plane plane=image.getPlanes()[0];ByteBuffer data=plane.getBuffer();
         for(int y=0;y<h;y++)for(int x=0;x<w;x++){
             int px=Math.min(region.right-1,region.left+(int)((x+.5f)*region.width()/w)),py=Math.min(region.bottom-1,region.top+(int)((y+.5f)*region.height()/h));
@@ -86,6 +91,8 @@ public final class CaptureService extends Service {
                             }
                         }
                         info="한국어 인식 완료 ("+((System.nanoTime()-stamp)/1_000_000)+"ms)";
+                        Semantic.Found found=Semantic.inspect(new Semantic.Scene(nodes,new Semantic.Box(0,0,width,height)));
+                        AppState.log("OCR "+request.state()+" home="+found.home()+" complete="+(found.complete()!=null)+" waiting="+(found.waiting()!=null)+" history="+found.history()+" ageMs="+((System.nanoTime()-stamp)/1_000_000));
                         service.acceptOcr(request,stamp,nodes);
                     }else{info="글자를 읽지 못했어요.";AppState.log(String.valueOf(task.getException()));}
                 }finally{bitmap.recycle();busy=false;}
@@ -98,5 +105,5 @@ public final class CaptureService extends Service {
         Semantic.Box b=new Semantic.Box(crop.left+Math.round(r.left*sx),crop.top+Math.round(r.top*sy),crop.left+Math.round(r.right*sx),crop.top+Math.round(r.bottom*sy));
         nodes.add(new Semantic.Node(nodes.size(),-1,text,b,false,true,"OCR"));
     }
-    @Override public void onDestroy(){closing=true;AppState.capturing=false;info="화면 확인이 꺼져 있어요.";getSystemService(DisplayManager.class).unregisterDisplayListener(displayListener);if(display!=null)display.release();if(reader!=null)reader.close();if(projection!=null)projection.stop();if(recognizer!=null)recognizer.close();if(thread!=null)thread.quitSafely();super.onDestroy();}
+    @Override public void onDestroy(){closing=true;ready=false;AppState.capturing=false;info="화면 확인이 꺼져 있어요.";getSystemService(DisplayManager.class).unregisterDisplayListener(displayListener);if(display!=null)display.release();if(reader!=null)reader.close();if(projection!=null)projection.stop();if(recognizer!=null)recognizer.close();if(thread!=null)thread.quitSafely();super.onDestroy();}
 }

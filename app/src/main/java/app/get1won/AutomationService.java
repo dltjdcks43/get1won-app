@@ -116,7 +116,7 @@ public final class AutomationService extends AccessibilityService {
     public void acceptOcr(OcrRequest request,long stamp,List<Semantic.Node> text){
         if(worker==null)return;
         worker.post(()->{
-            if(request.generation!=AppState.engine.generation() || request.cycle!=AppState.engine.cycleId || request.state!=AppState.engine.state || request.revision!=revision.get() || System.nanoTime()-stamp>1_500_000_000L){if(diagnosticPending){diagnosticPending=false;wanted=null;analysis+="\n화면이 바뀌었어요. 다시 분석해주세요.";}return;}
+            if(request.generation!=AppState.engine.generation() || request.cycle!=AppState.engine.cycleId || request.state!=AppState.engine.state || request.revision!=revision.get() || System.nanoTime()-stamp>10_000_000_000L){if(diagnosticPending){diagnosticPending=false;wanted=null;analysis+="\n화면이 바뀌었어요. 다시 분석해주세요.";}return;}
             Snapshot fresh=read();if(fresh==null || !fresh.pkg.equals(request.pkg) || fresh.windowId!=request.windowId || fresh.revision!=request.revision)return;
             List<Semantic.Node> combined=new ArrayList<>(fresh.scene.nodes());int id=combined.size();
             for(Semantic.Node n:text)combined.add(new Semantic.Node(id++,-1,n.text(),n.box(),false,true,"OCR"));
@@ -128,6 +128,7 @@ public final class AutomationService extends AccessibilityService {
     }
     private void decide(Snapshot s,Semantic.Found f,boolean definitive){
         if(s.generation!=AppState.engine.generation() || s.revision!=revision.get())return;
+        if(AppState.engine.state==Engine.State.WAIT_REWARD_COMPLETE && f.waiting()!=null)waitingRegion=rect(f.waiting().box());
         updateAnalysis(s.scene);
         // Protect only currently relevant controls; on HOME the panel is moved clear of the next target.
         List<Rect> protect=new ArrayList<>();
