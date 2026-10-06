@@ -13,7 +13,7 @@ public final class Engine {
     public final long[] actions=new long[4];
     public volatile String reason="준비됐어요",targetPackage="";
     private final Port port; private long entered,watermark,lastFrame; private int limit,mask;
-    private Effect pending;
+    private Effect pending; private long decisionEntered;
     public Engine(Port port){this.port=port;}
     public synchronized boolean active(){return state!=State.IDLE && state!=State.PAUSED && state!=State.ERROR;}
     public synchronized long generation(){return generation;}
@@ -36,6 +36,12 @@ public final class Engine {
         mask|=bit;change(action,f.time);pending=new Effect(step,generation,cycleId,f.time,target);return pending;
     }
     public synchronized boolean valid(Effect e){return e!=null && pending==e && active() && generation==e.generation && cycleId==e.cycleId;}
+    /** No platform request was issued: discard stale evidence and reobserve the same stage. */
+    public synchronized void abandon(Effect e){
+        if(!valid(e))return;pending=null;mask&=~(1<<(e.step-1));
+        state=switch(e.step){case 1->State.WAIT_HOME;case 2->State.WAIT_REWARD_COMPLETE;case 3->State.WAIT_HOME_AFTER_REWARD;default->State.WAIT_POINTS_HISTORY;};
+        entered=decisionEntered;reason=label(state);port.log("stale evidence discarded before step "+e.step);
+    }
     public synchronized void acknowledge(Effect e,boolean success,long now){
         if(!valid(e))return;
         pending=null;if(!success){fail("화면을 누르지 못했어요. 처음 화면에서 다시 시작해주세요.");return;}
@@ -47,6 +53,7 @@ public final class Engine {
         lastFrame=f.time;
         if(!targetPackage.equals(f.pkg)){pause("다른 앱으로 이동해서 잠시 멈췄어요.");return null;}
         tick(f.time);if(!active() || pending!=null)return null;
+        decisionEntered=entered;
         Semantic.Found s=f.found;
         switch(state){
             case WAIT_HOME -> {

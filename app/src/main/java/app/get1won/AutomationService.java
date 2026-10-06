@@ -116,7 +116,7 @@ public final class AutomationService extends AccessibilityService {
     public void acceptOcr(OcrRequest request,long stamp,List<Semantic.Node> text){
         if(worker==null)return;
         worker.post(()->{
-            if(request.generation!=AppState.engine.generation() || request.cycle!=AppState.engine.cycleId || request.state!=AppState.engine.state || request.revision!=revision.get() || System.nanoTime()-stamp>1_500_000_000L)return;
+            if(request.generation!=AppState.engine.generation() || request.cycle!=AppState.engine.cycleId || request.state!=AppState.engine.state || request.revision!=revision.get() || System.nanoTime()-stamp>1_500_000_000L){if(diagnosticPending){diagnosticPending=false;wanted=null;analysis+="\n화면이 바뀌었어요. 다시 분석해주세요.";}return;}
             Snapshot fresh=read();if(fresh==null || !fresh.pkg.equals(request.pkg) || fresh.windowId!=request.windowId || fresh.revision!=request.revision)return;
             List<Semantic.Node> combined=new ArrayList<>(fresh.scene.nodes());int id=combined.size();
             for(Semantic.Node n:text)combined.add(new Semantic.Node(id++,-1,n.text(),n.box(),false,true,"OCR"));
@@ -140,24 +140,24 @@ public final class AutomationService extends AccessibilityService {
         Engine.Effect effect=AppState.engine.frame(new Engine.Frame(s.generation,s.time,s.pkg,f,definitive));
         if(effect==null)return;
         // No delay, posting, or multi-frame confirmation between first completion decision and BACK.
-        boolean ok=execute(effect,s);
-        AppState.engine.acknowledge(effect,ok,System.nanoTime());wanted=null;scannedAt=0;
+        int result=execute(effect,s);
+        if(result<0)AppState.engine.abandon(effect);else AppState.engine.acknowledge(effect,result==1,System.nanoTime());wanted=null;scannedAt=0;
     }
-    private boolean execute(Engine.Effect effect,Snapshot s){
-        if(!AppState.engine.valid(effect) || s.revision!=revision.get() || System.nanoTime()-s.time>250_000_000L)return false;
+    private int execute(Engine.Effect effect,Snapshot s){
+        if(!AppState.engine.valid(effect) || s.revision!=revision.get() || System.nanoTime()-s.time>250_000_000L)return -1;
         AccessibilityNodeInfo root=getRootInActiveWindow();
-        if(root==null || root.getWindowId()!=s.windowId || !s.pkg.contentEquals(root.getPackageName()) || !AppState.engine.valid(effect))return false;
-        if(effect.step()==2 || effect.step()==4)return performGlobalAction(GLOBAL_ACTION_BACK);
-        Semantic.Node target=effect.target();if(target==null)return false;
+        if(root==null || root.getWindowId()!=s.windowId || !s.pkg.contentEquals(root.getPackageName()) || !AppState.engine.valid(effect))return -1;
+        if(effect.step()==2 || effect.step()==4)return performGlobalAction(GLOBAL_ACTION_BACK)?1:0;
+        Semantic.Node target=effect.target();if(target==null)return 0;
         AccessibilityNodeInfo handle=s.handles.get(target.id());
-        if(handle!=null && handle.isClickable() && handle.performAction(AccessibilityNodeInfo.ACTION_CLICK))return true;
-        if(!AppState.engine.valid(effect) || s.revision!=revision.get())return false;
+        if(handle!=null && handle.isClickable() && handle.performAction(AccessibilityNodeInfo.ACTION_CLICK))return 1;
+        if(!AppState.engine.valid(effect) || s.revision!=revision.get())return -1;
         Rect area=rect(target.box());Rect overlay=panelBounds;
-        if(area.isEmpty() || (overlay!=null && Rect.intersects(area,overlay)))return false;
+        if(area.isEmpty() || (overlay!=null && Rect.intersects(area,overlay)))return 0;
         Path path=new Path();path.moveTo(area.exactCenterX(),area.exactCenterY());
         return dispatchGesture(new GestureDescription.Builder().addStroke(new GestureDescription.StrokeDescription(path,0,1)).build(),new GestureResultCallback(){
             @Override public void onCancelled(GestureDescription g){if(effect.generation()==AppState.engine.generation())AppState.engine.pause("터치가 취소됐어요. 다시 시작해주세요.");}
-        },ui);
+        },ui)?1:0;
     }
     private void updateAnalysis(Semantic.Scene scene){
         Semantic.Found f=Semantic.inspect(scene);

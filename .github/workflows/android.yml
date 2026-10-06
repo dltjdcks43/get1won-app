@@ -65,9 +65,7 @@ jobs:
           profile: pixel_2
           disable-animations: true
           script: |
-            bash ./gradlew connectedDebugAndroidTest --no-daemon
-            adb pull /data/local/tmp/get1won-ux app/build/reports/ux
-            test "$(find app/build/reports/ux -name '*.png' | wc -l)" -ge 17
+            bash ./gradlew connectedDebugAndroidTest --no-daemon; result=$?; adb pull /data/local/tmp/get1won-ux app/build/reports/ux; if [ "$result" -ne 0 ]; then exit "$result"; fi; test "$(find app/build/reports/ux -name '*.png' | wc -l)" -ge 17
       - uses: actions/upload-artifact@v4
         if: always()
         with:
