@@ -141,9 +141,7 @@ public final class AutomationService extends AccessibilityService {
         worker.post(()->{
             if(!panelSessionActive || !AppState.capturing || request.generation!=AppState.engine.generation() || request.cycle!=AppState.engine.cycleId || request.state!=AppState.engine.state || request.attempt!=AppState.engine.adAttempts || request.revision!=revision.get() || System.nanoTime()-stamp>10_000_000_000L){if(diagnosticPending){diagnosticPending=false;wanted=null;analysis+="\n화면이 바뀌었어요. 다시 분석해주세요.";}return;}
             Snapshot fresh=read();if(fresh==null || !fresh.pkg.equals(request.pkg) || fresh.windowId!=request.windowId || fresh.revision!=request.revision)return;
-            List<Semantic.Node> combined=new ArrayList<>(fresh.scene.nodes());int id=combined.size();
-            for(Semantic.Node n:text)combined.add(new Semantic.Node(id++,-1,n.text(),n.box(),false,true,"OCR"));
-            Semantic.Scene scene=new Semantic.Scene(combined,fresh.scene.screen());
+            Semantic.Scene scene=Semantic.mergeOcr(fresh.scene,text);
             Snapshot merged=new Snapshot(fresh.generation,System.nanoTime(),fresh.revision,fresh.windowId,fresh.pkg,scene,fresh.handles);
             latest=merged;updateAnalysis(scene);diagnosticPending=false;wanted=null;
             if(AppState.engine.active())decide(merged,Semantic.inspect(scene),true);
@@ -161,6 +159,7 @@ public final class AutomationService extends AccessibilityService {
         if(next!=null && overlay!=null && Rect.intersects(overlay,rect(next.box()))){
             ui.post(()->{placePanel();Rect moved=panelBounds;if(moved!=null && !Rect.intersects(moved,rect(next.box())))worker.post(()->{if(System.nanoTime()-s.time<250_000_000L)decide(s,f,definitive);});});return;
         }
+        if(AppState.engine.state==Engine.State.WAIT_HOME && definitive)AppState.log(Semantic.homeCheck(f));
         Engine.Effect effect=AppState.engine.frame(new Engine.Frame(s.generation,s.time,s.pkg,f,definitive));
         if(effect==null)return;
         // No delay, posting, or multi-frame confirmation between first completion decision and BACK.

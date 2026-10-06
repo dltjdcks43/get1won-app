@@ -23,13 +23,39 @@ public final class Semantic {
     }
     private static boolean points(String t){return CompletionText.normalize(t).equals("내포인트");}
     private static boolean anchor(String t){String s=CompletionText.normalize(t);return s.contains("구경") && s.contains("1원") && s.contains("받");}
+    private static boolean sameObservation(Box a,Box b){
+        if(a.contains(b) || b.contains(a))return true;
+        long overlap=(long)Math.max(0,Math.min(a.right,b.right)-Math.max(a.left,b.left))*Math.max(0,Math.min(a.bottom,b.bottom)-Math.max(a.top,b.top));
+        long union=(long)a.width()*a.height()+(long)b.width()*b.height()-overlap;
+        if(overlap>0 && overlap>=union*.5)return true;
+        long dx=(long)a.cx()-b.cx(),dy=(long)a.cy()-b.cy(),height=Math.min(a.height(),b.height());
+        return dx*dx+dy*dy<=height*height && Math.abs(dy)<=height*.5 && Math.min(a.width(),b.width())>=Math.max(a.width(),b.width())*.5;
+    }
     private static Node unique(Scene s,java.util.function.Predicate<String> match){
-        Node found=null;
+        List<Node> observations=new ArrayList<>();Node found=null;
         for(Node n:s.nodes)if(n.enabled && n.box.valid() && match.test(n.text)){
-            if(found!=null && !found.box.contains(n.box) && !n.box.contains(found.box))return null;
-            if(found==null || found.box.contains(n.box))found=n;
+            // Compare every observation: a large OCR block must not bridge two distant labels.
+            for(Node previous:observations)if(!sameObservation(previous.box,n.box))return null;
+            observations.add(n);
+            if(found==null || ("Accessibility".equals(n.source) && !"Accessibility".equals(found.source)) ||
+                    (n.source.equals(found.source) && (long)n.box.width()*n.box.height()<(long)found.box.width()*found.box.height()))found=n;
         }
         return found;
+    }
+    /** The production Accessibility + OCR merge, shared with regression tests. */
+    public static Scene mergeOcr(Scene fresh,List<Node> text){
+        List<Node> combined=new ArrayList<>(fresh.nodes());int id=combined.stream().mapToInt(Node::id).max().orElse(-1)+1;
+        for(Node n:text)combined.add(new Node(id++,-1,n.text(),n.box(),false,true,"OCR"));
+        return new Scene(combined,fresh.screen());
+    }
+    public static String homeCheck(Found f){
+        StringBuilder log=new StringBuilder("HOME CHECK points=").append(f.points!=null?"found":"not found").append(" anchor=").append(f.anchor!=null?"found":"not found").append(" ad=").append(f.ad!=null?"found":"not found");
+        Node[] nodes={f.points,f.anchor,f.ad};String[] names={"points","anchor","ad"};
+        for(int i=0;i<nodes.length;i++){Node n=nodes[i];if(n!=null)log.append("\n").append(names[i]).append(" source=").append(n.source).append(" text=").append(n.text).append(" bounds=").append(n.box);}
+        List<String> missing=new ArrayList<>();if(f.points==null)missing.add("points missing");if(f.anchor==null)missing.add("anchor missing");if(f.ad==null)missing.add("ad missing");
+        if(!missing.isEmpty())log.append("\nHOME FAIL reason: ").append(String.join(", ",missing));
+        else if(!f.home())log.append("\nHOME FAIL reason: conflicting reward/history evidence");
+        return log.toString();
     }
     private static Node first(Scene s,java.util.function.Predicate<String> match){for(Node n:s.nodes)if(n.enabled && n.box.valid() && match.test(n.text))return n;return null;}
     public static Found inspect(Scene s){

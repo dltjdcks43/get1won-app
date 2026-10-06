@@ -5,7 +5,11 @@ public class ThreeCycleSelfCheck {
  static final Engine engine=new Engine(s->{});
  static final TestAudit audit=new TestAudit();
  static Semantic.Node node(int id,String text,int top,int bottom,boolean click,String source){return new Semantic.Node(id,-1,text,new Semantic.Box(100,top,900,bottom),click,true,source);}
- static Semantic.Found inspect(Semantic.Node... n){return Semantic.inspect(new Semantic.Scene(List.of(n),new Semantic.Box(0,0,1000,2000)));}
+ static Semantic.Found inspect(Semantic.Node... n){
+  var fresh=new Semantic.Scene(List.of(n),new Semantic.Box(0,0,1000,2000));List<Semantic.Node> duplicates=new ArrayList<>();
+  for(var node:n){String t=CompletionText.normalize(node.text());if(t.equals("내포인트") || (t.contains("구경") && t.contains("1원"))){var b=node.box();duplicates.add(new Semantic.Node(0,-1,node.text(),new Semantic.Box(b.left()+3,b.top()+3,b.right()+5,b.bottom()+4),false,true,"OCR"));}}
+  return Semantic.inspect(Semantic.mergeOcr(fresh,duplicates));
+ }
  static Engine.Effect frame(Semantic.Found f){time+=10_000_000L;return engine.frame(new Engine.Frame(engine.generation(),time,"fixture",f,true));}
  static void deliver(Engine.Effect effect,int step,boolean complete){if(effect==null || effect.step()!=step)throw new AssertionError("step "+step);if((step==1 && effect.target().id()!=3) || (step==3 && effect.target().id()!=1))throw new AssertionError("wrong target");audit.action(step,complete,false,false);engine.acknowledge(effect,true,time);}
  public static void main(String[] args){
