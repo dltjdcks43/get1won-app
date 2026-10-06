@@ -27,17 +27,53 @@ public final class AutomationService extends AccessibilityService {
     private volatile OcrRequest wanted;
     private OcrRequest lastRequested;
     private volatile boolean panelSessionActive;
+    private final OverlayCaptureGate captureGate=new OverlayCaptureGate();
+    private volatile Object clickHide;private long observedGeneration=-1,missingAdSince;
+    private boolean panelHidden(){return captureGate.hidden() || clickHide!=null;}
+    private void updatePanelVisibility(){
+        boolean shown=panelSessionActive && !panelHidden();
+        if(panel!=null)panel.setVisibility(shown?View.VISIBLE:panelSessionActive?View.INVISIBLE:View.GONE);
+        if(params!=null && panel!=null){int flags=shown?params.flags & ~WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE:params.flags | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;if(flags!=params.flags){params.flags=flags;wm.updateViewLayout(panel,params);}}
+    }
+    private boolean current(OcrRequest q){return panelSessionActive && AppState.capturing && q.generation==AppState.engine.generation() && q.cycle==AppState.engine.cycleId && q.state==AppState.engine.state && q.revision==revision.get();}
+    public void temporarilyHidePanelForCapture(OcrRequest request,Runnable ready){ui.post(()->{
+        if(!current(request) || wanted!=request)return;
+        if(panel!=null)panel.setVisibility(View.INVISIBLE);if(pulse!=null)pulse.setVisibility(View.INVISIBLE);
+        captureGate.hide(request,System.nanoTime());updatePanelVisibility();AppState.log("OCR panel hidden for capture");
+        ui.postDelayed(()->{if(current(request) && captureGate.ready(request,System.nanoTime()))ready.run();else finishPanelCapture(request);},70);
+        ui.postDelayed(()->{if(captureGate.owns(request)){finishPanelCapture(request);if(current(request)){wanted=null;AppState.engine.pause("새 화면을 캡처하지 못했어요. 다시 시작해주세요.");}}},700);
+    });}
+    public boolean captureFrameAllowed(OcrRequest request,long stamp){return current(request) && captureGate.accepts(request,stamp,System.nanoTime());}
+    public boolean captureReady(OcrRequest request){return current(request) && captureGate.ready(request,System.nanoTime());}
+    public void finishPanelCapture(OcrRequest request){ui.post(()->{if(captureGate.release(request)){updatePanelVisibility();AppState.log("OCR panel restored");}});}
+    private void finishHiddenClick(Object token){ui.post(()->{if(clickHide==token){clickHide=null;updatePanelVisibility();AppState.log("panel restored after target click");}});}
+    private AccessibilityNodeInfo foregroundApplicationRoot(){
+        AccessibilityWindowInfo best=null;
+        for(AccessibilityWindowInfo w:getWindows())if(w.getType()==AccessibilityWindowInfo.TYPE_APPLICATION && (w.isActive() || w.isFocused()) && (best==null || w.getLayer()>best.getLayer()))best=w;
+        return best==null?null:best.getRoot();
+    }
+    private AccessibilityNodeInfo getTargetRoot(){
+        AccessibilityNodeInfo root=foregroundApplicationRoot();
+        if(root==null || !AppState.engine.targetPackage.contentEquals(root.getPackageName()))return null;
+        return root;
+    }
+    private void resetCycleObservation(){
+        long gen=AppState.engine.generation(),cycle=AppState.engine.cycleId;
+        if(observedGeneration==gen && waitingCycle==cycle)return;
+        observedGeneration=gen;waitingCycle=cycle;captureGate.clear();clickHide=null;ui.post(this::updatePanelVisibility);waitingRegion=null;ocrAttempts=0;protectedBounds=List.of();wanted=null;lastRequested=null;missingAdSince=0;
+        AppState.log("CYCLE "+cycle+" HOME SCAN");
+    }
     public boolean sessionActive(){return panelSessionActive;}
     public void openSession(){ui.post(()->{if(AppState.accessibility!=this || !AppState.capturing || !CaptureService.ready)return;panelSessionActive=true;panel.setVisibility(View.VISIBLE);placePanel();});}
     public void closeSession(){
-        panelSessionActive=false;AppState.capturing=false;AppState.stop();wanted=null;diagnostic=false;diagnosticPending=false;
+        panelSessionActive=false;captureGate.clear();clickHide=null;AppState.capturing=false;AppState.stop();wanted=null;diagnostic=false;diagnosticPending=false;
         Runnable hide=()->{if(panel!=null)panel.setVisibility(View.GONE);if(pulse!=null)pulse.setVisibility(View.GONE);panelBounds=null;};
         if(Looper.myLooper()==Looper.getMainLooper())hide.run();else ui.post(hide);
         stopService(new android.content.Intent(this,CaptureService.class));
     }
     public synchronized boolean claimOcr(OcrRequest request){if(wanted!=request)return false;wanted=null;return true;}
     public String analysis(){return analysis;}
-    public Rect overlayBounds(){if(!panelSessionActive)return null;Rect b=panelBounds;return b==null?null:new Rect(b);}
+    public Rect overlayBounds(){if(!panelSessionActive || panelHidden())return null;Rect b=panelBounds;return b==null?null:new Rect(b);}
     View controls(){return panel;}
     public OcrRequest ocrRequest(){return wanted;}
     private int dp(float n){return Math.round(n*getResources().getDisplayMetrics().density);}
@@ -51,7 +87,9 @@ public final class AutomationService extends AccessibilityService {
     }
     @Override public void onAccessibilityEvent(AccessibilityEvent e){
         if(worker==null)return;
+        for(AccessibilityWindowInfo w:getWindows())if(w.getId()==e.getWindowId() && w.getType()==AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY)return;
         Snapshot s=latest;
+        if(s!=null && !s.pkg.equals(getPackageName()) && getPackageName().contentEquals(e.getPackageName()))return;
         // Capture timers, background notifications and our overlay do not change
         // the target window. Foreground/window changes still trigger an immediate check.
         if(s!=null && e.getEventType()!=AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED &&
@@ -65,7 +103,8 @@ public final class AutomationService extends AccessibilityService {
         if(!CaptureService.ready){AppState.engine.pause("화면 확인을 준비하고 있어요. 잠시 후 다시 눌러주세요.");return;}
         if(!panelSessionActive)return;
         // Read at the user's START tap, not a saved registration or an app launch.
-        AccessibilityNodeInfo root=getRootInActiveWindow();
+        AccessibilityNodeInfo root=foregroundApplicationRoot();
+        bottom=true;
         String pkg=root==null?"":String.valueOf(root.getPackageName());
         AppState.stop();wanted=null;diagnostic=false;diagnosticPending=false;
         if(pkg.isEmpty() || getSystemService(KeyguardManager.class).isKeyguardLocked() || (pkg.equals(getPackageName()) && !TestActivity.visible)){
@@ -77,7 +116,7 @@ public final class AutomationService extends AccessibilityService {
     private void analyzeNow(){worker.post(()->{Snapshot s=read();if(s!=null){latest=s;updateAnalysis(s.scene);diagnosticPending=AppState.capturing;requestOcr(s,Semantic.inspect(s.scene));}diagnostic=false;});}
     private Snapshot read(){
         long gen=AppState.engine.generation(),rev=revision.get(),now=System.nanoTime();
-        AccessibilityNodeInfo root=getRootInActiveWindow();if(root==null)return null;
+        AccessibilityNodeInfo root=AppState.engine.targetPackage.isEmpty()?foregroundApplicationRoot():getTargetRoot();if(root==null)return null;
         List<Semantic.Node> nodes=new ArrayList<>();Map<Integer,AccessibilityNodeInfo> handles=new HashMap<>();
         Rect display=wm.getMaximumWindowMetrics().getBounds();
         if(AppState.engine.state==Engine.State.WAIT_REWARD_COMPLETE){
@@ -103,13 +142,18 @@ public final class AutomationService extends AccessibilityService {
     private final Runnable scan=()->{
         if(!AppState.engine.active())return;
         try{
+            resetCycleObservation();
             Snapshot s=read();if(s==null){wanted=null;AppState.engine.pause("화면을 찾지 못했어요. 처음 화면으로 돌아가 주세요.");return;}
             latest=s;scannedRevision=s.revision;scannedAt=System.nanoTime();
             if(getSystemService(KeyguardManager.class).isKeyguardLocked() || !s.pkg.equals(AppState.engine.targetPackage) || (s.pkg.equals(getPackageName()) && !TestActivity.visible)){
                 wanted=null;AppState.engine.pause("다른 앱으로 이동해서 잠시 멈췄어요.");return;
             }
             Semantic.Found found=Semantic.inspect(s.scene);
-            if(waitingCycle!=AppState.engine.cycleId){waitingCycle=AppState.engine.cycleId;waitingRegion=null;ocrAttempts=0;}
+            if(clickHide!=null && (found.reward() || found.history()))finishHiddenClick(clickHide);
+            if(found.home() && found.ad()==null && (AppState.engine.state==Engine.State.WAIT_HOME || AppState.engine.state==Engine.State.WAIT_HOME_AFTER_POINTS)){
+                if(missingAdSince==0)missingAdSince=System.nanoTime();AppState.engine.reason="광고를 찾고 있어요";
+                if(System.nanoTime()-missingAdSince>8_000_000_000L){wanted=null;AppState.engine.pause("광고를 찾지 못했어요.");return;}
+            }else missingAdSince=0;
             if(found.waiting()!=null)waitingRegion=rect(found.waiting().box());
             boolean missing=needsOcr(found);
             if(missing && !AppState.capturing){wanted=null;AppState.engine.pause("화면 확인이 필요해요. 앱에서 다시 사용 시작을 눌러주세요.");return;}
@@ -154,12 +198,22 @@ public final class AutomationService extends AccessibilityService {
         // Protect only currently relevant controls; on HOME the panel is moved clear of the next target.
         List<Rect> protect=new ArrayList<>();
         Semantic.Node next=switch(AppState.engine.state){case WAIT_HOME,WAIT_HOME_AFTER_POINTS,OPEN_REWARD_AD->f.ad();case WAIT_HOME_AFTER_REWARD->f.pointsTarget();case WAIT_REWARD_COMPLETE->f.complete()!=null?f.complete():f.waiting();default->null;};
-        if(next!=null)protect.add(rect(next.box()));protectedBounds=List.copyOf(protect);
-        Rect overlay=panelBounds;
-        if(next!=null && overlay!=null && Rect.intersects(overlay,rect(next.box()))){
-            ui.post(()->{placePanel();Rect moved=panelBounds;if(moved!=null && !Rect.intersects(moved,rect(next.box())))worker.post(()->{if(System.nanoTime()-s.time<250_000_000L)decide(s,f,definitive);});});return;
+        if(next!=null)protect.add(rect(next.box()));
+        if(f.home()){protect.add(rect(f.points().box()));protect.add(rect(f.anchor().box()));}
+        protectedBounds=List.copyOf(protect);
+        Rect overlay=overlayBounds();
+        boolean touchStage=switch(AppState.engine.state){case WAIT_HOME,WAIT_HOME_AFTER_POINTS,WAIT_HOME_AFTER_REWARD,OPEN_REWARD_AD->true;default->false;};
+        if(touchStage && next!=null && overlay!=null && Rect.intersects(overlay,rect(next.box()))){
+            AppState.log("panelBounds="+overlay+" targetBounds="+next.box()+" overlap=true");
+            ui.post(()->{
+                placePanel();Rect moved=overlayBounds();
+                if(moved==null || !Rect.intersects(moved,rect(next.box()))){worker.post(()->{if(System.nanoTime()-s.time<250_000_000L)decide(s,f,definitive);});return;}
+                if(clickHide!=null)return;Object token=new Object();clickHide=token;updatePanelVisibility();AppState.log("panel hidden for target click");
+                ui.postDelayed(()->worker.post(()->{if(s.generation==AppState.engine.generation() && System.nanoTime()-s.time<250_000_000L)decide(s,f,definitive);else {finishHiddenClick(token);scan.run();}}),60);
+                ui.postDelayed(()->finishHiddenClick(token),800);
+            });return;
         }
-        if(AppState.engine.state==Engine.State.WAIT_HOME && definitive)AppState.log(Semantic.homeCheck(f));
+        if(definitive && (AppState.engine.state==Engine.State.WAIT_HOME || AppState.engine.state==Engine.State.WAIT_HOME_AFTER_POINTS || AppState.engine.state==Engine.State.WAIT_HOME_AFTER_REWARD))AppState.log(Semantic.homeCheck(f));
         Engine.Effect effect=AppState.engine.frame(new Engine.Frame(s.generation,s.time,s.pkg,f,definitive));
         if(effect==null)return;
         // No delay, posting, or multi-frame confirmation between first completion decision and BACK.
@@ -173,10 +227,14 @@ public final class AutomationService extends AccessibilityService {
     }
     private int execute(Engine.Effect effect,Snapshot s){
         if(!AppState.engine.valid(effect) || s.revision!=revision.get() || System.nanoTime()-s.time>250_000_000L)return -1;
-        AccessibilityNodeInfo root=getRootInActiveWindow();
+        AccessibilityNodeInfo root=getTargetRoot();
         if(root==null || root.getWindowId()!=s.windowId || !s.pkg.contentEquals(root.getPackageName()) || !AppState.engine.valid(effect))return -1;
         if(effect.step()==2 || effect.step()==4)return performGlobalAction(GLOBAL_ACTION_BACK)?1:0;
         Semantic.Node target=effect.target();if(target==null)return 0;
+        Rect targetArea=rect(target.box()),visiblePanel=overlayBounds();
+        boolean overlap=visiblePanel!=null && Rect.intersects(targetArea,visiblePanel);
+        AppState.log("panelBounds="+visiblePanel+" targetBounds="+targetArea+" overlap="+overlap);
+        if(overlap)return -1;
         AccessibilityNodeInfo handle=s.handles.get(target.id());
         int attempt=AppState.engine.adAttempts+1;
         if(handle!=null && handle.isClickable() && (effect.step()!=1 || attempt==1)){
@@ -186,7 +244,7 @@ public final class AutomationService extends AccessibilityService {
             if(accepted)return 1;
         }
         if(!AppState.engine.valid(effect) || s.revision!=revision.get())return -1;
-        Rect area=rect(target.box());Rect overlay=panelBounds;
+        Rect area=rect(target.box());Rect overlay=overlayBounds();
         if(area.isEmpty() || (overlay!=null && Rect.intersects(area,overlay)))return 0;
         // Retry only within freshly observed content, never expand beyond its bounds.
         float x=effect.step()==1 && attempt==3?area.left+area.width()*.65f:area.exactCenterX();
@@ -229,10 +287,10 @@ public final class AutomationService extends AccessibilityService {
     void resizePanel(){if(panel==null)return;float scale=new float[]{1,1.2f,1.4f,1.65f}[AppState.profile.panelSize];appliedSize=AppState.profile.panelSize;panel.setPadding(dp(8*scale),dp(8*scale),dp(8*scale),dp(6*scale));status.setTextSize(13*scale);for(Button b:new Button[]{primary,stop,move}){b.setTextSize(13*scale);b.setMinHeight(dp(Math.max(b==primary?60:48,40*scale)));b.setMinimumHeight(b.getMinHeight());b.setPadding(dp(6*scale),dp(4*scale),dp(6*scale),dp(4*scale));LinearLayout.LayoutParams lp=(LinearLayout.LayoutParams)b.getLayoutParams();lp.topMargin=dp(4*scale);lp.setMarginEnd(b==stop?dp(4*scale):0);b.setLayoutParams(lp);}params.width=Math.min(dp(240*scale),wm.getMaximumWindowMetrics().getBounds().width()-dp(16));wm.updateViewLayout(panel,params);placePanel();}
     private boolean overlaps(Rect r){for(Rect p:protectedBounds)if(Rect.intersects(p,r))return true;return false;}
     private void placePanel(){
-        if(panel==null || !panelSessionActive)return;Rect d=wm.getMaximumWindowMetrics().getBounds();panel.measure(View.MeasureSpec.makeMeasureSpec(params.width,View.MeasureSpec.EXACTLY),View.MeasureSpec.makeMeasureSpec(0,View.MeasureSpec.UNSPECIFIED));int h=panel.getMeasuredHeight();int top=dp(28),low=Math.max(top,d.height()-h-dp(34));
+        if(panel==null || !panelSessionActive || panelHidden())return;Rect d=wm.getMaximumWindowMetrics().getBounds();panel.measure(View.MeasureSpec.makeMeasureSpec(params.width,View.MeasureSpec.EXACTLY),View.MeasureSpec.makeMeasureSpec(0,View.MeasureSpec.UNSPECIFIED));int h=panel.getMeasuredHeight();int top=dp(28),low=Math.max(top,d.height()-h-dp(34));
         List<Integer> ys=new ArrayList<>();ys.add(bottom?low:top);ys.add(bottom?top:low);for(int y=top;y<low;y+=dp(16))ys.add(y);
         for(int y:ys){Rect r=new Rect(dp(8),y,dp(8)+params.width,y+h);if(!overlaps(r)){params.x=r.left;params.y=r.top;wm.updateViewLayout(panel,params);panelBounds=r;return;}}
-        if(AppState.engine.active())AppState.engine.pause("조작창을 놓을 곳이 부족해요. 설정에서 크기를 줄여주세요.");
+        // The caller temporarily hides the panel if no placement clears the target.
     }
     private void createPulse(){pulse=new View(this);pulse.setVisibility(View.GONE);pulse.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);WindowManager.LayoutParams p=new WindowManager.LayoutParams(2,2,WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE|WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE,PixelFormat.TRANSLUCENT);p.gravity=Gravity.TOP|Gravity.END;wm.addView(pulse,p);}
     private final Runnable refresh=new Runnable(){public void run(){
@@ -244,7 +302,7 @@ public final class AutomationService extends AccessibilityService {
         String label=diagnostic?"분석":AppState.engine.active()?"잠시 멈춤":"시작";
         boolean changed=!message.contentEquals(status.getText()) || !label.contentEquals(primary.getText());
         if(changed){status.setText(message);status.setContentDescription(message+". 잡고 움직이면 위치를 옮길 수 있어요.");primary.setText(label);primary.setContentDescription(label);placePanel();}
-        panel.setVisibility(panelSessionActive?View.VISIBLE:View.GONE);pulse.setVisibility(panelSessionActive && wanted!=null?View.VISIBLE:View.GONE);if(wanted!=null){pulseLight=!pulseLight;pulse.setBackgroundColor(pulseLight?0xFF707070:0xFF808080);}
+        updatePanelVisibility();pulse.setVisibility(panelSessionActive && !panelHidden() && wanted!=null?View.VISIBLE:View.GONE);if(wanted!=null && !panelHidden()){pulseLight=!pulseLight;pulse.setBackgroundColor(pulseLight?0xFF707070:0xFF808080);}
         ui.postDelayed(this,100);
     }};
 }

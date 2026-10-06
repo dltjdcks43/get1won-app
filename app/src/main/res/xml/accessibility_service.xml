@@ -4,6 +4,6 @@
     android:notificationTimeout="0"
     android:canPerformGestures="true"
     android:canRetrieveWindowContent="true"
-    android:accessibilityFlags="flagReportViewIds"
+    android:accessibilityFlags="flagReportViewIds|flagRetrieveInteractiveWindows"
     android:isAccessibilityTool="false"
     android:description="@string/accessibility_description" />

@@ -21,6 +21,7 @@ public final class CaptureService extends Service {
     private ImageReader reader;private VirtualDisplay display;private int width,height,rotation;
     private volatile boolean closing;private boolean busy;private long lastStamp;
     private TextRecognizer recognizer;
+    private AutomationService.OcrRequest pendingCapture;private AutomationService captureOwner;
     public static volatile boolean ready,preparationFailed;
     private boolean openWhenReady;
     private final Handler main=new Handler(Looper.getMainLooper());
@@ -59,27 +60,45 @@ public final class CaptureService extends Service {
     }
     private final DisplayManager.DisplayListener displayListener=new DisplayManager.DisplayListener(){public void onDisplayAdded(int id){}public void onDisplayRemoved(int id){if(id==Display.DEFAULT_DISPLAY)invalidateGeometry();}public void onDisplayChanged(int id){if(id==Display.DEFAULT_DISPLAY){Rect b=getSystemService(WindowManager.class).getMaximumWindowMetrics().getBounds();if(b.width()!=width || b.height()!=height || getSystemService(DisplayManager.class).getDisplay(id).getRotation()!=rotation)invalidateGeometry();}}};
     private void invalidateGeometry(){if(closing)return;AppState.engine.pause("화면 크기가 바뀌었어요. 화면 확인을 다시 허용해주세요.");stopSelf();}
-    private Bitmap sample(Image image,Rect region,Rect overlay){
+    private Bitmap sample(Image image,Rect region){
         float scale=Math.min(1f,720f/region.width());int w=Math.max(1,Math.round(region.width()*scale)),h=Math.max(1,Math.round(region.height()*scale));
         int[] pixels=new int[w*h];Image.Plane plane=image.getPlanes()[0];ByteBuffer data=plane.getBuffer();
         for(int y=0;y<h;y++)for(int x=0;x<w;x++){
             int px=Math.min(region.right-1,region.left+(int)((x+.5f)*region.width()/w)),py=Math.min(region.bottom-1,region.top+(int)((y+.5f)*region.height()/h));
-            if(overlay!=null && overlay.contains(px,py)){pixels[y*w+x]=Color.WHITE;continue;}
             int offset=py*plane.getRowStride()+px*plane.getPixelStride();pixels[y*w+x]=Color.rgb(data.get(offset)&255,data.get(offset+1)&255,data.get(offset+2)&255);
         }
         return Bitmap.createBitmap(pixels,w,h,Bitmap.Config.ARGB_8888);
     }
+    private void drain(ImageReader source){try(Image old=source.acquireLatestImage()){ /* Release frames produced before overlay hiding. */ }}
     private void onImage(ImageReader source){
         if(closing)return;
+        AutomationService service=AppState.accessibility;
+        AutomationService.OcrRequest request=service==null?null:service.ocrRequest();
+        if(busy || !ready || request==null){
+            if(pendingCapture!=null){captureOwner.finishPanelCapture(pendingCapture);pendingCapture=null;}
+            drain(source);return;
+        }
+        if(pendingCapture!=request){
+            if(pendingCapture!=null)captureOwner.finishPanelCapture(pendingCapture);
+            pendingCapture=request;captureOwner=service;drain(source);
+            service.temporarilyHidePanelForCapture(request,()->handler.post(()->{if(!closing && pendingCapture==request)captureNewFrame(source,service,request);}));return;
+        }
+        // Keep the newly produced hidden-overlay frame queued until the UI settle interval ends.
+        if(service.captureReady(request))captureNewFrame(source,service,request);
+    }
+    private void captureNewFrame(ImageReader source,AutomationService service,AutomationService.OcrRequest request){
+        if(closing || busy || pendingCapture!=request)return;
         try(Image image=source.acquireLatestImage()){
-            if(image==null || busy || !ready)return;
-            AutomationService service=AppState.accessibility;if(service==null)return;
-            AutomationService.OcrRequest request=service.ocrRequest();if(request==null)return;
-            long stamp=image.getTimestamp(),now=System.nanoTime();
-            if(stamp<=lastStamp || stamp<=request.after() || stamp<=0 || now-stamp>250_000_000L || stamp>now+50_000_000L)return;
+            if(image==null)return;
+            long stamp=image.getTimestamp();
+            if(stamp<=lastStamp || stamp<=request.after() || !service.captureFrameAllowed(request,stamp))return;
             if(request.generation()!=AppState.engine.generation() || !service.claimOcr(request))return;
-            lastStamp=stamp;Rect region=new Rect(request.region());if(!region.intersect(0,0,width,height))return;
-            Bitmap bitmap=sample(image,region,service.overlayBounds());busy=true;
+            lastStamp=stamp;Rect region=new Rect(request.region());
+            Bitmap bitmap;
+            try{
+                if(!region.intersect(0,0,width,height))return;
+                bitmap=sample(image,region);busy=true;AppState.log("OCR new frame captured without panel");
+            }finally{pendingCapture=null;service.finishPanelCapture(request);}
             info="한국어 인식 중";
             recognizer.process(InputImage.fromBitmap(bitmap,0)).addOnCompleteListener(task->handler.post(()->{
                 try{
@@ -103,7 +122,7 @@ public final class CaptureService extends Service {
                     }else{info="글자를 읽지 못했어요.";AppState.log(String.valueOf(task.getException()));}
                 }finally{bitmap.recycle();busy=false;}
             }));
-        }catch(Exception ex){busy=false;info="화면 확인 오류";AppState.log(ex.toString());}
+        }catch(Exception ex){pendingCapture=null;service.finishPanelCapture(request);busy=false;info="화면 확인 오류";AppState.log(ex.toString());}
     }
     private void add(List<Semantic.Node> nodes,String text,Rect r,Rect crop,Bitmap image){
         if(r==null || r.isEmpty())return;
@@ -111,5 +130,5 @@ public final class CaptureService extends Service {
         Semantic.Box b=new Semantic.Box(crop.left+Math.round(r.left*sx),crop.top+Math.round(r.top*sy),crop.left+Math.round(r.right*sx),crop.top+Math.round(r.bottom*sy));
         nodes.add(new Semantic.Node(nodes.size(),-1,text,b,false,true,"OCR"));
     }
-    @Override public void onDestroy(){closing=true;ready=false;AppState.capturing=false;main.removeCallbacksAndMessages(null);if(AppState.accessibility!=null)AppState.accessibility.closeSession();if(!preparationFailed)info="화면 확인이 꺼져 있어요.";getSystemService(DisplayManager.class).unregisterDisplayListener(displayListener);if(display!=null)display.release();if(reader!=null)reader.close();if(projection!=null)projection.stop();if(recognizer!=null)recognizer.close();if(thread!=null)thread.quitSafely();super.onDestroy();}
+    @Override public void onDestroy(){closing=true;if(pendingCapture!=null && captureOwner!=null)captureOwner.finishPanelCapture(pendingCapture);pendingCapture=null;ready=false;AppState.capturing=false;main.removeCallbacksAndMessages(null);if(AppState.accessibility!=null)AppState.accessibility.closeSession();if(!preparationFailed)info="화면 확인이 꺼져 있어요.";getSystemService(DisplayManager.class).unregisterDisplayListener(displayListener);if(display!=null)display.release();if(reader!=null)reader.close();if(projection!=null)projection.stop();if(recognizer!=null)recognizer.close();if(thread!=null)thread.quitSafely();super.onDestroy();}
 }

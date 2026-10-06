@@ -15,7 +15,13 @@ public class ThreeCycleSelfCheck {
  public static void main(String[] args){
   engine.start(time,3,"fixture");
   String[] anchors={"다시 구경하고 1원 받아요","여기서 혜택 구경하고 1원 받아요","여기서 구경하면 1원 받아요"};
+  var captureGate=new OverlayCaptureGate();
   for(int cycle=0;cycle<3;cycle++){
+   Object request=new Object();long hiddenAt=time;captureGate.hide(request,hiddenAt);
+   if(captureGate.accepts(request,hiddenAt-1,hiddenAt+70_000_000L))throw new AssertionError("old overlay frame accepted");
+   time+=70_000_000L;
+   if(!captureGate.accepts(request,hiddenAt+20_000_000L,time))throw new AssertionError("fresh frame rejected");
+   if(!captureGate.release(request) || captureGate.hidden())throw new AssertionError("overlay not restored");
    var home=inspect(node(1,"내 포인트",200,260,cycle==0,cycle==0?"Accessibility":"OCR"),node(2,anchors[cycle],800,880,false,"OCR"),node(3,"변하는 광고 상품 제목 "+cycle,920,1020,cycle==0,cycle==0?"Accessibility":"OCR"),node(4,"알림 동의하고 1원 받기",1500,1580,true,"Accessibility"));
    var adRequest=frame(home);
    if(cycle==0){engine.acknowledge(adRequest,true,time);time+=600_000_000L;adRequest=frame(home);if(engine.state!=Engine.State.OPEN_REWARD_AD || engine.actions[0]!=0)throw new AssertionError("HOME falsely confirmed");}
