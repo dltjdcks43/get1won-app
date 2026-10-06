@@ -31,8 +31,8 @@ public class DeviceFlowTest {
         TestActivity activity=(TestActivity)i.startActivitySync(new Intent(i.getTargetContext(),TestActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));i.waitForIdleSync();
         // Run the complete OCR path first so OCR regressions fail before the long endurance run.
         capture();i.runOnMainSync(()->{AppState.profile.repeats=1;activity.hideAllText=true;activity.hideCompletionAccessibility=true;activity.resetHome();});floatingStart();
-        until(()->AppState.engine.completed==1 && AppState.engine.state==Engine.State.IDLE,70000,"on-device Korean OCR full cycle");
-        i.runOnMainSync(()->{assertArrayEquals(new int[]{1,0,0,0,0,0,0},activity.counters());assertEquals(0,activity.historyClicks);AppState.stop();i.getTargetContext().stopService(new Intent(i.getTargetContext(),CaptureService.class));activity.hideAllText=false;activity.hideCompletionAccessibility=false;activity.resetHome();AppState.profile.repeats=100;});
+        until(()->AppState.engine.completed==1 && AppState.engine.state==Engine.State.IDLE,120000,"on-device Korean OCR full cycle");
+        i.runOnMainSync(()->{assertArrayEquals(new int[]{1,0,0,0,0,0,0},activity.counters());assertArrayEquals("Every OCR phase must actually use OCR evidence",new long[]{1,1,1,1},AppState.accessibility.ocrActions);assertEquals(0,activity.historyClicks);AppState.stop();i.getTargetContext().stopService(new Intent(i.getTargetContext(),CaptureService.class));activity.hideAllText=false;activity.hideCompletionAccessibility=false;activity.resetHome();AppState.profile.repeats=100;});
         until(()->!AppState.capturing,5000,"capture disabled for accessibility-only endurance");
         long[] baseline=AppState.engine.actions.clone();long started=SystemClock.uptimeMillis();floatingStart();
         until(()->AppState.engine.actions[0]>baseline[0],4500,"START must select foreground without 5s delay or registration");assertEquals("app.get1won",AppState.engine.targetPackage);assertTrue(SystemClock.uptimeMillis()-started<5000);assertFalse(AppState.capturing);

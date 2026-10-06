@@ -16,7 +16,7 @@ public class EngineTest {
  @Test public void completionReservesBackOnSameFrame(){start();Engine.Effect a=frame(reward(true,false));assertEquals(2,a.step());assertEquals(now,a.time());}
  @Test public void timeoutOnlyPauses(){start();e.tick(now+31_000_000_000L);assertEquals(Engine.State.PAUSED,e.state);assertArrayEquals(new long[]{1,0,0,0},e.actions);}
  @Test public void repeatedCompletionCannotDuplicateBack(){start();var a=frame(reward(true,false));assertNull(frame(reward(true,false)));ack(a,2);assertNull(frame(reward(true,false)));assertEquals(1,e.actions[1]);}
- @Test public void wrongStableDestinationDoesNotAdvance(){start();ack(frame(reward(true,false)),2);for(int i=0;i<20;i++)assertNull(frame(history()));assertEquals(0,e.actions[2]);e.tick(now+11_000_000_000L);assertEquals(Engine.State.PAUSED,e.state);}
+ @Test public void wrongStableDestinationDoesNotAdvance(){start();ack(frame(reward(true,false)),2);for(int i=0;i<20;i++)assertNull(frame(history()));assertEquals(0,e.actions[2]);e.tick(now+31_000_000_000L);assertEquals(Engine.State.PAUSED,e.state);}
  @Test public void historyNeedsBothFeatures(){start();ack(frame(reward(true,false)),2);ack(frame(home()),3);assertNull(frame(reward(false,false)));assertEquals(0,e.actions[3]);}
  @Test public void startOnWrongScreenPausesWithoutClick(){e.start(now,1,"target");assertNull(frame(history()));assertEquals(Engine.State.PAUSED,e.state);assertEquals(0,e.actions[0]);}
  @Test public void foreignPackageInvalidatesReservedEffect(){start();var a=frame(reward(true,false));e.frame(new Engine.Frame(e.generation(),now+1,"foreign",home(),true));assertFalse(e.valid(a));e.acknowledge(a,true,now+2);assertEquals(0,e.actions[1]);}

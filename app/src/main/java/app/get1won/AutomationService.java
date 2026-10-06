@@ -17,6 +17,7 @@ public final class AutomationService extends AccessibilityService {
     private LinearLayout panel; private TextView status; private Button primary,stop,move;
     private WindowManager.LayoutParams params; private boolean bottom=true; private int appliedSize=-1;
     private volatile Rect panelBounds; private volatile List<Rect> protectedBounds=List.of();
+    public final long[] ocrActions=new long[4];
     private final AtomicLong revision=new AtomicLong();
     private volatile Snapshot latest; private volatile boolean diagnostic,diagnosticPending; private volatile String analysis="아직 분석하지 않았어요.";
     private long scannedRevision=-1,scannedAt; private int screenW,screenH,rotation;
@@ -40,8 +41,10 @@ public final class AutomationService extends AccessibilityService {
     @Override public void onAccessibilityEvent(AccessibilityEvent e){
         if(worker==null)return;
         Snapshot s=latest;
-        // Our accessibility overlay is not the target application's content.
-        if(s!=null && e.getWindowId()!=s.windowId && String.valueOf(e.getPackageName()).equals(getPackageName()) && e.getEventType()!=AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED)return;
+        // Capture timers, background notifications and our overlay do not change
+        // the target window. Foreground/window changes still trigger an immediate check.
+        if(s!=null && e.getEventType()!=AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED &&
+                (e.getWindowId()!=s.windowId || !String.valueOf(e.getPackageName()).equals(s.pkg)))return;
         revision.incrementAndGet();worker.removeCallbacks(scan);worker.post(scan);
     }
     @Override public void onInterrupt(){AppState.engine.pause("접근성 연결이 끊겼어요.");}
@@ -142,6 +145,11 @@ public final class AutomationService extends AccessibilityService {
         if(effect==null)return;
         // No delay, posting, or multi-frame confirmation between first completion decision and BACK.
         int result=execute(effect,s);
+        if(result==1){boolean ocr=switch(effect.step()){
+            case 1->"OCR".equals(f.anchor().source()) || "OCR".equals(f.points().source());
+            case 2->"OCR".equals(f.complete().source());case 3->"OCR".equals(f.points().source());
+            default->"OCR".equals(f.all().source()) || "OCR".equals(f.historyEntry().source());
+        };if(ocr)ocrActions[effect.step()-1]++;}
         if(result<0)AppState.engine.abandon(effect);else AppState.engine.acknowledge(effect,result==1,System.nanoTime());wanted=null;scannedAt=0;
     }
     private int execute(Engine.Effect effect,Snapshot s){
