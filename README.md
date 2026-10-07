@@ -1,50 +1,38 @@
-# 1원 받기 4.1
+# 1원 받기 V2
 
-앱에서 **사용 시작**을 눌러 화면 확인을 허용한 다음, 원하는 포인트 화면을 직접 열고 조작창의 **시작**을 누릅니다. 앱 선택, 자동 실행, 좌표 등록은 없습니다.
+V1 전체 작업은 `archive/v1-before-v2` 브랜치에 보존했습니다. V2는 기존 실행 구조를 재사용하지 않고 관측/의미 분석/전환 확인으로 나눴습니다.
 
-## 준비와 사용
+## 구조
 
-1. 접근성이 꺼져 있으면 메인의 **설정하기**로 접근성을 켭니다. 접근성만 켜져 있을 때는 조작창이 숨겨져 있습니다.
-2. **사용 시작**을 누르면 Android 화면 확인 권한 창이 열립니다. 승인 후 캡처와 한국어 OCR 준비가 완료되어야 조작창과 준비 완료 표시가 나타납니다. 준비 실패 시 다시 사용 시작을 누릅니다.
-3. 원하는 앱의 포인트 메인 화면을 직접 열고 조작창에서 시작합니다. 접근성 정보가 부족하면 해당 화면 revision의 OCR 결과를 기다립니다.
-4. **잠시 멈춤**은 자동화를 일시정지합니다. **중지**는 화면 확인과 이번 세션을 종료하고 조작창을 숨깁니다. 다시 사용할 때는 앱의 사용 시작을 누릅니다. Android 화면 공유 종료 시에도 조작창이 닫힙니다.
+- `Semantic`: 한 application window의 immutable 관측. 공백 정규화, 의미 토큰, 가까운 분할 문장 결합, 겹치는 Accessibility/OCR 관측 병합. 멀리 떨어진 중복은 모호성 유지.
+- `Engine`: HOME → 광고 진입 확인 → 완료 대기 → HOME → 내역 → HOME. 플랫폼의 요청 수락과 화면 전환을 분리합니다. Android node/광고 위치를 저장하지 않습니다.
+- `AutomationService`: foreground TYPE_APPLICATION만 읽고 overlay/자기 앱은 제외. Accessibility 이벤트 + 400ms 보조 확인, 이벤트 폭주 시 분석 간격 최소 300ms. 트리 최대 600개. 관측 후 즉시 동작, Android node 참조는 해당 관측에서만 유효.
+- `CaptureService`: 필요한 의미 정보가 없을 때만 번들 한국어 ML Kit. 동일 정지 화면 1회와 상태당 5초 후 재확인 1회. 화면 변경은 새 요청 가능. 한 번에 OCR 1개, 요청 간격 최소 500ms. MediaProjection 화면을 파일/서버에 저장하지 않습니다.
+- `OcrTicket`: generation/cycle/state/revision/window/package/새 root fingerprint/프레임 생성 시각을 검증해 오래된 콜백을 폐기합니다.
+- `Diagnostics`: 마지막 state/cycleId/action/semantic 결과와 Java stack, Android의 과거 process exit/ANR trace를 앱 내부에 보관합니다. 고급 설정의 마지막 오류 보기에서 읽습니다.
 
-화면 이미지는 저장하거나 전송하지 않습니다. 한국어 인식 모델은 APK에 포함됩니다.
+광고 anchor는 `구경` + `1원` + `받`이며 가까운 세로 분할 문장을 합칩니다. 제목/상품명/금액은 타겟 선택 기준이 아닙니다. anchor 아래 가까운 가로형 콘텐츠를 찾고 clickable row를 우선합니다. 접근성이 부족하면 OCR 제목 bounds를 사용합니다. 고정 화면 좌표나 테스트 ID는 사용하지 않습니다.
 
-## 화면을 확인하는 순서
+클릭은 ACTION_CLICK 우선, 그 외 현재 bounds의 80ms gesture입니다. HOME이 1초 후 그대로면 새 관측으로만 최대 3회 시도합니다. 3초+구경이 있는 동안 BACK 금지. 1원+받았 완료를 유효하게 관측하면 추가 대기 없이 BACK합니다. 30초 timeout은 PAUSED이며 BACK 조건이 아닙니다. 다음 cycle은 이전 관측을 버린 뒤 새 스캔에서 시작합니다.
 
-- HOME의 `내 포인트`와 `다시 혜택 구경하고 1원 받아요`를 함께 확인합니다. 영상에서 관찰한 `다시 구경하고 1원 받아요`와 줄바꿈도 지원합니다.
-- 안내 바로 아래의 클릭 가능한 컨테이너를 현재 트리 관계와 bounds로 찾습니다. 가까운 카드가 모호하거나 클릭 가능한 영역이 없으면 정지합니다. 상품명, 브랜드, 금액은 선택 조건이 아닙니다.
-- `3초 구경해요` 또는 `3초 구경해주세요`가 있으면 완료 BACK은 금지입니다. `1원 받았어요`(끝 마침표 허용)를 처음 유효하게 확인한 호출에서 곧바로 시스템 BACK을 요청합니다. 추가 지연이나 다중 프레임 확인이 없습니다.
-- HOME의 두 문구를 다시 확인하고 `내 포인트`의 클릭 가능한 부모를 누릅니다.
-- 내역의 `전체`와 `광고 보고 1원 받기`가 확인되면 시스템 BACK합니다. 개별 내역 행은 누르지 않습니다.
-- HOME 복귀를 확인해야 다음 사이클을 시작합니다. 각 단계 화면 확인 30초 초과는 일시정지 조건이며 동작 실행 조건이 아닙니다.
+실행 전 일반 조작창, 실행 중 가장자리의 작은 실행 중/중지 창을 사용합니다. target과 겹치면 이동하고 다시 관측합니다. OCR마다 hide/show하지 않습니다. 서비스 종료는 서로 stop을 재호출하지 않습니다.
 
-## 안전장치와 인식 범위
+## 사용
 
-시작 순간 foreground package를 이번 실행의 대상으로 삼습니다. 다른 앱, 잠금 화면, 회전/크기 변경, 오래된 결과, 중지/설정 변경 후 콜백은 다음 동작을 진행하지 못합니다. cycleId와 단계 비트마스크로 1/2/3/4를 각각 한 번만 예약합니다. 플랫폼 호출은 엔진 잠금 밖에서 실행합니다.
+접근성 설정 → 사용 시작/화면 확인 허용 → 대상 앱을 직접 열기 → 조작창 시작. 중지는 자동화를 멈춥니다. 화면 확인 종료는 알림 또는 고급 설정에서 가능합니다. 시작한 앱을 벗어나면 일시정지합니다.
 
-Accessibility가 우선이며 문구가 부족할 때만 MediaProjection의 최신 이미지로 번들 한국어 ML Kit를 실행합니다. 한 번에 OCR 작업 하나만 처리하고 화면 이미지는 저장하거나 전송하지 않습니다. INTERNET와 ACCESS_NETWORK_STATE 권한은 병합 manifest에서도 제거합니다. 조작창 영역은 OCR에서 가립니다. OCR 텍스트의 실제 bounding box를 사용하며, 텍스트 없는 클릭 가능 컨테이너와 연결할 수 있습니다. 광고가 단일 캔버스로만 그려져 카드 구조도 노출하지 않으면 추측하지 않고 멈춥니다. 모든 외부 앱과의 호환을 보장하지 않습니다.
-
-화면 분석은 고급 설정에서 요청한 뒤 원하는 화면을 열고 조작창의 분석을 누릅니다. 분석 결과 보기에서 문구/영역/클릭 가능 여부/출처를 확인합니다.
-
-## 읽기 쉬운 조작창
-
-작게/보통/크게/아주 크게(1.0/1.2/1.4/1.65), 기본 크게입니다. 너비·글씨·버튼·여백을 함께 조정하고 화면 폭을 넘지 않습니다. 위/아래 및 드래그로 이동하며 다음 동작 대상을 가리면 자동 이동합니다. 주요 버튼은 60dp 이상, 다른 버튼은 48dp 이상입니다. 메인과 설정 등 주요 페이지 하단에 `Made by Hwarang · © 2026`이 있습니다.
-
-## 개발 검증
-
-JDK 17 / Gradle 8.11.1 / AGP 8.10.1 / compile SDK 36 / min SDK 34.
+## 검증
 
 ```sh
 ./gradlew testDebugUnitTest lintDebug assembleDebug
-./gradlew connectedDebugAndroidTest
 ```
 
-일반 push CI는 unit test, lint, assembleDebug와 APK 업로드만 실행합니다. 별도의 `Manual Android device tests` 워크플로는 사용자가 Actions에서 수동 실행할 때만 API 34/35/36에서 각각 100회 실제 접근성 클릭/BACK, 한국어 OCR 전체 사이클, 영구 대기, 외부 앱 이탈, 중지, 4개 창 크기 × 3개 시스템 글꼴 크기를 검사합니다. 테스트 화면은 매 사이클 광고/금액을 바꾸고 완료를 3000~8000ms, 전환을 250~1200ms로 무작위 지연합니다. 이 시간은 시험 자극이며 자동화 조건이 아닙니다. 기기 검증이 통과하기 전에는 성공으로 간주하지 않습니다.
+별도 `fixture` 앱은 자연스러운 TextView/Canvas/클릭 행만 노출합니다. 광고 제목·이미지·금액·문장을 매 cycle 변경하며, 2번째는 분할 anchor와 Canvas 제목으로 OCR fallback을 요구합니다. 자동화 APK에는 fixture 코드가 포함되지 않습니다.
 
-실제 휴대폰 테스트용 APK 단계입니다. TODO: 기준 커밋 `226e49b`의 최신 run `37459212419`에서 API 34는 OCR HOME 확인 중 일시정지하여 전체 사이클 검증이 실패했고, API 35/36은 테스트의 화면 캡처 동의 단계에서 실패했습니다. 이번 마무리에서는 앱 로직을 유지하고 기기 테스트를 재실행하지 않습니다. 실제 휴대폰의 실행·플로팅창·시작/중지는 설치 후 확인이 필요합니다.
+기기가 연결되면 다음 명령은 딱 3cycle의 실제 Android UI 흐름을 검증합니다. 테스트 fixture의 내부 audit 파일은 테스트 assertion에서만 읽으며 자동화 엔진은 접근하지 않습니다.
 
-APK artifact: `get1won-debug-apk`, 파일: `app-debug.apk`.
+```sh
+./gradlew :fixture:installDebug :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=app.get1won.ThreeCycleTest
+```
 
-참고: [한국어 온디바이스 ML Kit 공식 문서](https://developers.google.com/ml-kit/vision/text-recognition/v2/android), [영상 분석](docs/video-analysis-v4.md), [변경 전 리뷰](docs/review-v4.md).
+API matrix와 50/100회 테스트는 제거했습니다. `.github/workflows/three-cycles.yml`은 수동 실행 전용입니다. JVM의 3cycle 상태 전환 테스트는 실제 폰/gesture/OCR 검증을 대체하지 않습니다. 실기기 연결이 없으면 3cycle 및 crash/ANR 0회는 미검증입니다.

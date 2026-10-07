@@ -1,57 +1,53 @@
 package app.get1won;
-import java.util.*;
 import org.junit.Test;
 import static org.junit.Assert.*;
+
 public class EngineTest {
- private final Engine e=new Engine(s->{});private long now=1_000_000_000L;
- private Semantic.Found home(){return Semantic.inspect(SemanticTest.scene(SemanticTest.home()));}
- private Semantic.Found reward(boolean done,boolean waiting){return new Semantic.Found(null,null,done?SemanticTest.n(0,-1,"1원 받았어요",SemanticTest.b(0,0,100,50),false):null,waiting?SemanticTest.n(1,-1,"3초 구경해요",SemanticTest.b(0,60,100,100),false):null,null,null,null,null);}
- private Semantic.Found history(){return new Semantic.Found(null,null,null,null,SemanticTest.n(0,-1,"전체",SemanticTest.b(0,0,100,50),false),SemanticTest.n(1,-1,"광고 보고 1원 받기",SemanticTest.b(0,60,100,100),true),null,null);}
- private Engine.Effect frame(Semantic.Found f){now+=10_000_000L;return e.frame(new Engine.Frame(e.generation(),now,"target",f,true));}
- private void ack(Engine.Effect a,int step){assertNotNull(a);assertEquals(step,a.step());e.acknowledge(a,true,now);}
- private void start(){e.start(now,0,"target");ack(frame(home()),1);assertNull(frame(reward(false,true)));}
- @Test public void threeSemanticCyclesHaveConfirmedFourActions(){e.start(now,3,"target");ack(frame(home()),1);for(int i=0;i<3;i++){assertEquals(Engine.State.OPEN_REWARD_AD,e.state);assertNull(frame(reward(false,true)));assertEquals(Engine.State.WAIT_REWARD_COMPLETE,e.state);ack(frame(reward(true,false)),2);ack(frame(home()),3);ack(frame(history()),4);if(i<2)ack(frame(home()),1);else assertNull(frame(home()));}assertEquals(3,e.completed);assertArrayEquals(new long[]{3,3,3,3},e.actions);}
- @Test public void waitingAlwaysVetoesBack(){start();assertNull(frame(reward(true,true)));assertEquals(0,e.actions[1]);}
- @Test public void elapsedTimeNeverAuthorizesBack(){start();now+=10_000_000_000L;assertNull(frame(reward(false,true)));assertNull(frame(reward(false,false)));assertEquals(0,e.actions[1]);}
- @Test public void completionReservesBackOnSameFrame(){start();Engine.Effect a=frame(reward(true,false));assertEquals(2,a.step());assertEquals(now,a.time());}
- @Test public void timeoutOnlyPauses(){start();e.tick(now+31_000_000_000L);assertEquals(Engine.State.PAUSED,e.state);assertArrayEquals(new long[]{1,0,0,0},e.actions);}
- @Test public void repeatedCompletionCannotDuplicateBack(){start();var a=frame(reward(true,false));assertNull(frame(reward(true,false)));ack(a,2);assertNull(frame(reward(true,false)));assertEquals(1,e.actions[1]);}
- @Test public void wrongStableDestinationDoesNotAdvance(){start();ack(frame(reward(true,false)),2);for(int i=0;i<20;i++)assertNull(frame(history()));assertEquals(0,e.actions[2]);e.tick(now+31_000_000_000L);assertEquals(Engine.State.PAUSED,e.state);}
- @Test public void historyNeedsBothFeatures(){start();ack(frame(reward(true,false)),2);ack(frame(home()),3);assertNull(frame(reward(false,false)));assertEquals(0,e.actions[3]);}
- @Test public void startOnWrongScreenPausesWithoutClick(){e.start(now,1,"target");assertNull(frame(history()));assertEquals(Engine.State.PAUSED,e.state);assertEquals(0,e.actions[0]);}
- @Test public void foreignPackageInvalidatesReservedEffect(){start();var a=frame(reward(true,false));e.frame(new Engine.Frame(e.generation(),now+1,"foreign",home(),true));assertFalse(e.valid(a));e.acknowledge(a,true,now+2);assertEquals(0,e.actions[1]);}
- @Test public void stopDiscardsLateEffectAndFrame(){start();var a=frame(reward(true,false));long gen=e.generation();e.stop();assertFalse(e.valid(a));e.acknowledge(a,true,now+1);assertNull(e.frame(new Engine.Frame(gen,now+2,"target",home(),true)));assertEquals(0,e.actions[1]);}
- @Test public void settingsInvalidateOldGeneration(){start();var a=frame(reward(true,false));e.settingsChanged();assertFalse(e.valid(a));}
- @Test public void restartNeedsHomeAgain(){start();e.pause("pause");e.start(now,1,"target");assertNull(frame(reward(true,false)));assertEquals(Engine.State.PAUSED,e.state);assertEquals(0,e.actions[1]);}
- @Test public void staleTimestampCannotAct(){start();assertNull(e.frame(new Engine.Frame(e.generation(),now,"target",reward(true,false),true)));}
- @Test public void failedPlatformActionStopsChain(){start();var a=frame(reward(true,false));e.acknowledge(a,false,now);assertEquals(Engine.State.ERROR,e.state);assertNull(frame(home()));assertEquals(0,e.actions[2]);}
- @Test public void completionLimitWaitsForHomeReturn(){e.start(now,1,"target");ack(frame(home()),1);ack(frame(reward(true,false)),2);ack(frame(home()),3);ack(frame(history()),4);assertEquals(0,e.completed);assertNull(frame(home()));assertEquals(1,e.completed);assertEquals(Engine.State.IDLE,e.state);assertArrayEquals(new long[]{1,1,1,1},e.actions);}
- @Test public void staleUndispatchedReservationCanBeReobserved(){start();var old=frame(reward(true,false));e.abandon(old);assertFalse(e.valid(old));e.acknowledge(old,true,now);assertEquals(0,e.actions[1]);ack(frame(reward(true,false)),2);assertEquals(1,e.actions[1]);}
- @Test public void abandonedHistoryActionStillNeedsHistory(){start();ack(frame(reward(true,false)),2);ack(frame(home()),3);var old=frame(history());e.abandon(old);assertNull(frame(home()));assertEquals(0,e.actions[3]);ack(frame(history()),4);}
- @Test public void incompleteAccessibilityWaitsForOcrHome(){
-  e.start(now,1,"target");now+=10_000_000L;
-  assertNull(e.frame(new Engine.Frame(e.generation(),now,"target",reward(false,false),false)));
-  assertEquals(Engine.State.WAIT_HOME,e.state);assertArrayEquals(new long[]{0,0,0,0},e.actions);
-  ack(frame(home()),1);assertEquals(Engine.State.OPEN_REWARD_AD,e.state);assertNull(frame(reward(false,true)));assertEquals(Engine.State.WAIT_REWARD_COMPLETE,e.state);
- }
- @Test public void acceptedClickOnUnchangedHomeNeverConfirmsAndStopsAfterThree(){
-  e.start(now,1,"target");ack(frame(home()),1);
-  assertEquals(Engine.State.OPEN_REWARD_AD,e.state);assertEquals(0,e.actions[0]);
-  assertNull(frame(home()));assertEquals(1,e.adAttempts);
-  for(int attempt=2;attempt<=3;attempt++){now+=500_000_000L;ack(frame(home()),1);assertEquals(attempt,e.adAttempts);assertEquals(Engine.State.OPEN_REWARD_AD,e.state);assertEquals(0,e.actions[0]);}
-  now+=500_000_000L;assertNull(frame(home()));assertEquals(Engine.State.PAUSED,e.state);assertEquals(3,e.adAttempts);assertArrayEquals(new long[]{0,0,0,0},e.actions);
- }
- @Test public void completionAsFirstAdFrameConfirmsAndBacksImmediately(){
-  e.start(now,1,"target");ack(frame(home()),1);Engine.Effect back=frame(reward(true,false));assertEquals(2,back.step());assertEquals(now,back.time());assertEquals(1,e.actions[0]);
- }
- @Test public void blankTransitionIsNotAdEvidence(){
-  e.start(now,1,"target");ack(frame(home()),1);assertNull(frame(reward(false,false)));assertEquals(Engine.State.OPEN_REWARD_AD,e.state);assertEquals(0,e.actions[0]);
- }
- @Test public void rejectedRequestDoesNotConfirmUntilAcceptedRetry(){
-  e.start(now,1,"target");var first=frame(home());e.acknowledge(first,false,now);assertNull(frame(reward(false,true)));assertEquals(0,e.actions[0]);
-  now+=500_000_000L;ack(frame(home()),1);assertNull(frame(reward(false,true)));assertEquals(1,e.actions[0]);
- }
- @Test public void stopInvalidatesAdRetryAndConfirmation(){
-  e.start(now,1,"target");ack(frame(home()),1);now+=500_000_000L;var retry=frame(home());long gen=e.generation();e.stop();e.acknowledge(retry,true,now);assertNull(e.frame(new Engine.Frame(gen,now+1,"target",reward(false,true),true)));assertEquals(0,e.actions[0]);
- }
+    private final Engine engine=new Engine(s->{});
+    private static Semantic.Found home() {return Semantic.inspect(SemanticTest.home("여기서 구경하면 1원 받아요","바뀌는 콘텐츠"));}
+    private static Semantic.Found text(String... texts) {
+        java.util.List<Semantic.Node> nodes=new java.util.ArrayList<>();int y=200;
+        for(String text:texts){nodes.add(SemanticTest.access(text,y,y+60));y+=150;}
+        return Semantic.inspect(new Semantic.Scene(nodes,new Semantic.Box(0,0,1080,2200)));
+    }
+    private void enter() {engine.start(3,0);var d=engine.observe(home(),1);engine.submitted(d,true,1);}
+    @Test public void requestAcceptedDoesNotMeanAdEntered() {enter();assertEquals(0,engine.actions[0]);assertEquals(Engine.State.AD_ENTRY,engine.state);assertNull(engine.observe(home(),999));}
+    @Test public void waitingConfirmsEntryButNeverBacksByTime() {enter();assertNull(engine.observe(text("3초 구경해요"),100));assertEquals(1,engine.actions[0]);assertNull(engine.observe(text("3초 구경해요"),15000));assertEquals(0,engine.actions[1]);}
+    @Test public void completionBackIsSameObservation() {enter();var back=engine.observe(text("1원 받았어요"),100);assertEquals(Engine.Action.BACK_REWARD,back.action());assertEquals(1,engine.actions[0]);}
+    @Test public void waitingAlwaysVetoesCompletion() {enter();assertNull(engine.observe(text("3초 구경해요","1원 받았어요"),100));assertNull(engine.observe(text("3초 구경해요","1원 받았어요"),20000));}
+    @Test public void timeoutPausesWithoutAction() {enter();assertNull(engine.observe(text("3초 구경해요"),100));assertNull(engine.observe(text("3초 구경해요"),30101));assertEquals(Engine.State.PAUSED,engine.state);assertEquals(0,engine.actions[1]);}
+    @Test public void retriesUseFreshTargetsAndStopAtThree() {
+        enter();var fresh=Semantic.inspect(SemanticTest.home("한번 더 구경하고 1원 받아요","다른 광고"));
+        var second=engine.observe(fresh,1001);assertSame(fresh.ad(),second.target());assertEquals(2,second.attempt());engine.submitted(second,false,1001);
+        var third=engine.observe(home(),2001);assertEquals(3,third.attempt());engine.submitted(third,true,2001);
+        assertNull(engine.observe(home(),3001));assertEquals(Engine.State.PAUSED,engine.state);assertEquals(0,engine.actions[0]);
+    }
+    @Test public void noRetryWithoutFreshHome() {enter();assertNull(engine.observe(text("알 수 없는 화면"),2000));}
+    @Test public void freshHomeRequiredBeforePoints() {
+        enter();engine.submitted(engine.observe(text("1원 받았어요"),100),true,100);
+        assertNull(engine.observe(text("내 포인트"),200));assertEquals(Engine.Action.POINTS,engine.observe(home(),300).action());
+    }
+    @Test public void threeModeledCyclesDiscardReturnObservation() {
+        engine.start(3,0);long now=1;
+        for(int i=0;i<3;i++) {
+            engine.submitted(engine.observe(home(),now),true,now++);
+            assertNull(engine.observe(text("3초 구경해요"),now++));
+            engine.submitted(engine.observe(text("1원 받았어요"),now),true,now++);
+            engine.submitted(engine.observe(home(),now),true,now++);
+            engine.submitted(engine.observe(text("전체","구매 적립 +1원","포인트 사용 -2원"),now),true,now++);
+            long cycle=engine.cycleId;assertNull(engine.observe(home(),now++));assertEquals(cycle+1,engine.cycleId);
+        }
+        assertEquals(3,engine.completed);assertArrayEquals(new long[]{3,3,3,3},engine.actions);assertEquals(Engine.State.IDLE,engine.state);
+    }
+    @Test public void accessibilitySufficientSkipsOcr() {engine.start(3,0);assertFalse(engine.needsOcr(home(),0));assertTrue(engine.needsOcr(text("내 포인트"),0));}
+    @Test public void ocrOnlyRetryGetsFreshFrameWhenRetryIsDue() {
+        enter();
+        var noCard=text("내 포인트","여기서 구경하면 1원 받아요");
+        assertFalse(engine.needsOcr(noCard,500));
+        assertTrue(engine.needsOcr(noCard,1001));
+        engine.submitted(engine.observe(home(),1001),true,1001);
+        assertFalse(engine.needsOcr(noCard,1500));
+        assertTrue(engine.needsOcr(noCard,2001));
+    }
+    @Test public void stopInvalidatesSession() {enter();long before=engine.generation;engine.stop();assertTrue(engine.generation>before);assertNull(engine.observe(text("1원 받았어요"),10));}
 }

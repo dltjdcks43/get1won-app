@@ -9,32 +9,48 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import static org.junit.Assert.*;
 
+/** Exactly three real UI cycles against a separately installed application. No simulated clicks. */
 @RunWith(AndroidJUnit4.class)
 public class ThreeCycleTest {
-    private final Instrumentation i=InstrumentationRegistry.getInstrumentation();
-    private final UiDevice device=initialize();
-    private UiDevice initialize(){Configurator.getInstance().setUiAutomationFlags(UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES);return UiDevice.getInstance(i);}
-    private interface Check{boolean ok();}
-    private String diagnostic(){return AppState.status()+"\n"+CaptureService.info+"\n"+(AppState.accessibility==null?"":AppState.accessibility.analysis())+"\n"+AppState.advanced();}
-    private void until(Check c,long ms,String why){long end=SystemClock.uptimeMillis()+ms;while(SystemClock.uptimeMillis()<end){if(c.ok())return;SystemClock.sleep(100);}fail(why+"\n"+diagnostic());}
-    private void floatingStart(){UiObject2 start=device.wait(Until.findObject(By.pkg("app.get1won").text("시작")),5000);assertNotNull(diagnostic(),start);start.click();}
-    private void capture(){
-        MainActivity main=(MainActivity)i.startActivitySync(new Intent(i.getTargetContext(),MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));i.runOnMainSync(main::requestCapture);
-        long end=SystemClock.uptimeMillis()+15000;
-        while(!AppState.capturing && SystemClock.uptimeMillis()<end){UiObject2 allow=device.findObject(By.pkg("com.android.systemui").res("android:id/button1"));if(allow==null)allow=device.findObject(By.pkg("com.android.systemui").text(java.util.regex.Pattern.compile("(?i)Start now|Start recording|Start sharing|Start|Share|지금 시작|녹화 시작|공유 시작|시작")));if(allow!=null)allow.click();SystemClock.sleep(200);}
-        until(()->AppState.capturing,5000,"capture consent");until(()->CaptureService.ready,20000,"Korean model ready");i.runOnMainSync(main::finish);
+    private final Instrumentation instrumentation=InstrumentationRegistry.getInstrumentation();
+    private UiDevice device;
+    private interface Check { boolean ok(); }
+    private void until(Check check,long timeout,String message) {
+        long end=SystemClock.uptimeMillis()+timeout;
+        while(SystemClock.uptimeMillis()<end) { if(check.ok())return;SystemClock.sleep(200); }
+        fail(message+"\n"+AppState.advanced());
     }
-    @Test public void threeRealCyclesWithChangingAnchors() throws Exception {
-        device.wakeUp();device.executeShellCommand("wm dismiss-keyguard");
-        device.executeShellCommand("settings put secure enabled_accessibility_services app.get1won/app.get1won.AutomationService");device.executeShellCommand("settings put secure accessibility_enabled 1");device.executeShellCommand("pm grant app.get1won android.permission.POST_NOTIFICATIONS");until(()->AppState.accessibility!=null,15000,"accessibility");
-        TestActivity activity=(TestActivity)i.startActivitySync(new Intent(i.getTargetContext(),TestActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
-        capture();until(()->AppState.accessibility.sessionActive(),5000,"session ready");
-        i.runOnMainSync(()->{AppState.stop();AppState.profile.repeats=3;AppState.profile.randomTest=false;AppState.profile.testDelay=1200;activity.smokeThree=true;activity.resetHome();});
-        floatingStart();
-        until(()->AppState.engine.completed==3 && AppState.engine.state==Engine.State.IDLE,180000,"three complete cycles");
-        assertArrayEquals(diagnostic(),new long[]{3,3,3,3},AppState.engine.actions);
-        i.runOnMainSync(()->{assertArrayEquals(new int[]{3,0,0,0,0,0,0},activity.counters());assertEquals("Other one-won events/history rows",0,activity.historyClicks);});
-        android.util.Log.i("ThreeCycle","PASS cycles=3 actions=[3,3,3,3] wrongOrder=0 beforeCompletion=0 otherEventClicks=0");
-        i.runOnMainSync(()->{AppState.accessibility.closeSession();activity.finish();});
+    @Test public void threeExternalApplicationCycles() throws Exception {
+        Configurator.getInstance().setUiAutomationFlags(UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES);
+        device=UiDevice.getInstance(instrumentation);device.wakeUp();device.executeShellCommand("wm dismiss-keyguard");
+        String previous=device.executeShellCommand("settings get secure enabled_accessibility_services").trim();
+        String added=previous.isEmpty() || previous.equals("null")?"app.get1won/app.get1won.AutomationService":previous+":app.get1won/app.get1won.AutomationService";
+        try {
+            device.executeShellCommand("settings put secure enabled_accessibility_services "+added);
+            device.executeShellCommand("settings put secure accessibility_enabled 1");
+            device.executeShellCommand("pm grant app.get1won android.permission.POST_NOTIFICATIONS");
+            until(()->AppState.accessibility!=null,15000,"Accessibility connection");
+            MainActivity main=(MainActivity)instrumentation.startActivitySync(new Intent(instrumentation.getTargetContext(),MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+            instrumentation.runOnMainSync(main::requestCapture);
+            long end=SystemClock.uptimeMillis()+15000;
+            while(!AppState.capturing && SystemClock.uptimeMillis()<end) {
+                UiObject2 allow=device.findObject(By.pkg("com.android.systemui").res("android:id/button1"));
+                if(allow!=null)allow.click();SystemClock.sleep(200);
+            }
+            until(()->AppState.capturing && CaptureService.ready,30000,"Local Korean OCR ready");
+            instrumentation.runOnMainSync(()->AppState.profile.repeats=3);
+            device.executeShellCommand("am force-stop app.get1won.fixture");
+            device.executeShellCommand("am start -n app.get1won.fixture/.FixtureActivity");
+            UiObject2 start=device.wait(Until.findObject(By.pkg("app.get1won").text("시작")),5000);assertNotNull(start);start.click();
+            until(()->AppState.engine.completed==3 && AppState.engine.state==Engine.State.IDLE,150000,"Three consecutive cycles");
+            assertArrayEquals(new long[]{3,3,3,3},AppState.engine.actions);
+            String audit=device.executeShellCommand("run-as app.get1won.fixture cat files/audit.txt").trim();
+            assertEquals("cycles=3 ad=3 points=3 rewardBack=3 historyBack=3 earlyBack=0 wrongClick=0",audit);
+            android.util.Log.i("V2ThreeCycle",audit);
+        } finally {
+            instrumentation.runOnMainSync(()->{if(AppState.accessibility!=null)AppState.accessibility.closeSession();});
+            if(previous.equals("null"))device.executeShellCommand("settings delete secure enabled_accessibility_services");
+            else device.executeShellCommand("settings put secure enabled_accessibility_services "+previous);
+        }
     }
 }

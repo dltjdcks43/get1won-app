@@ -25,7 +25,7 @@ jobs:
           arch: x86_64
           profile: pixel_2
           disable-animations: true
-          script: bash ./gradlew connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=app.get1won.ThreeCycleTest --no-daemon
+          script: bash ./gradlew :fixture:installDebug :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=app.get1won.ThreeCycleTest --no-daemon
       - uses: actions/upload-artifact@v4
         if: always()
         with:
