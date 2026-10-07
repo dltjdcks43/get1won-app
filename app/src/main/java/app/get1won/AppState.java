@@ -7,7 +7,7 @@ public final class AppState {
     public static volatile String notice="대상 화면을 열고 조작창의 시작을 눌러주세요.";
     private static boolean loaded;
     private static final ArrayDeque<String> logs=new ArrayDeque<>();
-    public static synchronized void initialize(android.content.Context c){if(!loaded){loaded=true;profile.load(c);}}
+    public static synchronized void initialize(android.content.Context c){if(!loaded){loaded=true;CrashLog.install(c);profile.load(c);}}
     public static synchronized void log(String s){logs.addLast(s);while(logs.size()>120)logs.removeFirst();}
     public static synchronized String logs(){return String.join("\n",logs);}
     public static final Engine engine=new Engine(AppState::log);

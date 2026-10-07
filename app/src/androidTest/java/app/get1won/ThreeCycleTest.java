@@ -29,7 +29,7 @@ public class ThreeCycleTest {
         device.executeShellCommand("settings put secure enabled_accessibility_services app.get1won/app.get1won.AutomationService");device.executeShellCommand("settings put secure accessibility_enabled 1");device.executeShellCommand("pm grant app.get1won android.permission.POST_NOTIFICATIONS");until(()->AppState.accessibility!=null,15000,"accessibility");
         TestActivity activity=(TestActivity)i.startActivitySync(new Intent(i.getTargetContext(),TestActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
         capture();until(()->AppState.accessibility.sessionActive(),5000,"session ready");
-        i.runOnMainSync(()->{AppState.stop();AppState.profile.repeats=3;AppState.profile.randomTest=false;AppState.profile.testDelay=1200;activity.smokeThree=true;activity.resetHome();});
+        i.runOnMainSync(()->{AppState.stop();AppState.profile.repeats=3;AppState.profile.randomTest=false;AppState.profile.testDelay=3000;activity.smokeThree=true;activity.resetHome();});
         floatingStart();
         until(()->AppState.engine.completed==3 && AppState.engine.state==Engine.State.IDLE,180000,"three complete cycles");
         assertArrayEquals(diagnostic(),new long[]{3,3,3,3},AppState.engine.actions);

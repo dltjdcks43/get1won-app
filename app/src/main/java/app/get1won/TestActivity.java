@@ -41,18 +41,20 @@ public final class TestActivity extends Activity {
             place(card("내 포인트",String.format(java.util.Locale.KOREA,"%,d원",4300+audit.normal),Color.WHITE,()->{observe(3);transition("history",false);}),.12f,95);
             place(text(smokeThree?new String[]{"다시 구경하고 1원 받아요","여기서 혜택 구경하고 1원 받아요","여기서 구경하면 1원 받아요"}[Math.min(audit.normal,2)]:audit.normal%2==0?"다시 혜택 구경하고\n1원 받아요":"다시 구경하고 1원 받아요",22),.40f,76);
             int shade=Color.rgb(180+random.nextInt(60),180+random.nextInt(60),180+random.nextInt(60));
-            boolean savedHide=hideAllText;if(smokeThree && audit.normal>0)hideAllText=true;
-            LinearLayout ad=card("상품 "+audit.normal+" · "+new String[]{"여행","음악","생활","건강"}[audit.normal%4],"AD · 새로운 혜택을 확인하세요",shade,()->{observe(1);received=false;transition("detail",false);});
-            hideAllText=savedHide;
+            boolean savedHide=hideAllText;if(smokeThree)hideAllText=true;
+            LinearLayout ad=new LinearLayout(this);ad.setOrientation(LinearLayout.HORIZONTAL);ad.setGravity(Gravity.CENTER_VERTICAL);ad.setBackgroundColor(shade);
+            View icon=new View(this){final Paint p=new Paint();@Override protected void onDraw(Canvas c){p.setColor(shade^0x00404040);c.drawCircle(getWidth()/2f,getHeight()/2f,Math.min(getWidth(),getHeight())/3f,p);}};
+            ad.addView(icon,new LinearLayout.LayoutParams(dp(48),dp(48)));
+            ad.addView(text("상품 "+audit.normal+" · "+new String[]{"여행 상품 안내","음악 상품 안내","생활 상품 안내"}[audit.normal%3],19),new LinearLayout.LayoutParams(0,-1,1));
+            ad.addView(text(">",23),new LinearLayout.LayoutParams(dp(30),-1));
+            ad.setOnClickListener(v->{observe(1);received=false;transition("detail",false);});hideAllText=savedHide;place(ad,.52f,80);
             if(smokeThree && audit.normal>0)ad.setAccessibilityDelegate(new View.AccessibilityDelegate(){@Override public void onInitializeAccessibilityNodeInfo(View host,android.view.accessibility.AccessibilityNodeInfo info){super.onInitializeAccessibilityNodeInfo(host,info);info.setClickable(false);info.removeAction(android.view.accessibility.AccessibilityNodeInfo.AccessibilityAction.ACTION_CLICK);}});
             if(smokeThree){Button event=new Button(this);event.setText("알림 동의하고 1원 받기");event.setOnClickListener(v->historyClicks++);place(event,.78f,60);}
-            // Different drawn icon each cycle; not exposed as the semantic anchor.
-            View icon=new View(this){final Paint p=new Paint();@Override protected void onDraw(Canvas c){p.setColor(shade^0x00404040);c.drawCircle(getWidth()/2f,getHeight()/2f,Math.min(getWidth(),getHeight())/3f,p);}};ad.addView(icon,new LinearLayout.LayoutParams(-1,dp(20)));place(ad,.52f,120);
             if(ambiguous){Button other=new Button(this);other.setText("다른 광고");other.setOnClickListener(v->historyClicks++);place(other,.53f,80);}
         }else if(next.equals("detail")){
             View completion=place(hideCompletionAccessibility?new OcrText("3초 구경해요",26):text("3초 구경해요",26),.12f,64);completion.setBackgroundColor(Color.WHITE);
             place(text("광고 상세 화면",26),.4f,70);
-            int delay=AppState.profile.randomTest?3000+random.nextInt(5001):AppState.profile.testDelay;
+            int delay=smokeThree?3000:AppState.profile.randomTest?3000+random.nextInt(5001):AppState.profile.testDelay;
             if(delay>0)ui.postDelayed(()->{if(token==current){received=true;shownAt=System.nanoTime();if(completion instanceof OcrText canvas)canvas.value("1원 받았어요.");else ((TextView)completion).setText("1원 받았어요.");}},delay);
         }else if(next.equals("history")){
             place(text(wrongHistory?"다른 화면":"전체",24),.12f,60);

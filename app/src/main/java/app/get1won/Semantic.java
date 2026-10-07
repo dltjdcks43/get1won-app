@@ -48,6 +48,13 @@ public final class Semantic {
         for(Node n:text)combined.add(new Node(id++,-1,n.text(),n.box(),false,true,"OCR"));
         return new Scene(combined,fresh.screen());
     }
+    public static Scene ocrScene(Scene fresh,List<Node> text){
+        List<Node> geometry=new ArrayList<>();for(Node n:fresh.nodes())geometry.add(new Node(n.id,n.parent,"",n.box,n.clickable,n.enabled,"Accessibility"));
+        return mergeOcr(new Scene(geometry,fresh.screen()),text);
+    }
+    public static Found inspectOcr(Scene scene){
+        Found f=inspect(scene);return new Found(f.points,f.anchor,f.complete,f.waiting,f.all,f.historyEntry,ocrAd(scene,f.anchor),f.pointsTarget);
+    }
     public static String homeCheck(Found f){
         StringBuilder log=new StringBuilder("HOME CHECK points=").append(f.points!=null?"found":"not found").append(" anchor=").append(f.anchor!=null?"found":"not found").append(" ad=").append(f.ad!=null?"found":"not found");
         Node[] nodes={f.points,f.anchor,f.ad};String[] names={"points","anchor","ad"};
@@ -81,6 +88,7 @@ public final class Semantic {
         return false;
     }
     private static Node ocrAd(Scene s,Node anchor){
+        if(anchor==null)return null;
         List<Node> nearby=new ArrayList<>();
         for(Node n:s.nodes){
             if(!n.enabled || !"OCR".equals(n.source) || n.text.isBlank() || !n.box.valid() || !s.screen.contains(n.box))continue;
@@ -95,7 +103,7 @@ public final class Semantic {
         if(nearby.isEmpty())return null;Node first=nearby.get(0);
         if(nearby.size()>1 && nearby.get(1).box.top<first.box.bottom)return null;
         String t=CompletionText.normalize(first.text);
-        if(t.length()<4 || t.contains("1원") || t.contains("내포인트") || t.contains("출금") || t.contains("동의") || t.contains("알림") || anchor(t))return null;
+        if(t.length()<4 || t.contains("1원") || t.contains("내포인트") || t.contains("출금") || t.contains("동의") || t.contains("알림") || t.contains("확인하기") || t.contains("브랜드콘") || anchor(t))return null;
         return first; // Nonclickable OCR node: the platform adapter taps this observed box.
     }
     public static Node ad(Scene s,Node anchor){

@@ -67,7 +67,7 @@ public final class Engine {
                 if(adAccepted && !s.home() && !s.history() && (s.waiting()!=null || s.complete()!=null)){
                     actions[0]++;port.log("STEP1 screen transition confirmed attempt="+adAttempts);change(State.WAIT_REWARD_COMPLETE,f.time);
                     if(s.complete()!=null && s.waiting()==null){detections++;return reserve(2,State.BACK_FROM_REWARD,f,null);}
-                }else if(s.home() && f.time-adRequestedAt>=500_000_000L){
+                }else if(s.home() && f.time-adRequestedAt>=1_200_000_000L){
                     if(adAttempts>=3){pause("광고를 열지 못했어요. 다시 시작해주세요.");return null;}
                     if(s.ad()==null)return null;
                     port.log("STEP1 no transition, retry "+(adAttempts+1));mask|=1;

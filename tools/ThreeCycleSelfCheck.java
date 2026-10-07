@@ -5,26 +5,16 @@ public class ThreeCycleSelfCheck {
  static final Engine engine=new Engine(s->{});
  static final TestAudit audit=new TestAudit();
  static Semantic.Node node(int id,String text,int top,int bottom,boolean click,String source){return new Semantic.Node(id,-1,text,new Semantic.Box(100,top,900,bottom),click,true,source);}
- static Semantic.Found inspect(Semantic.Node... n){
-  var fresh=new Semantic.Scene(List.of(n),new Semantic.Box(0,0,1000,2000));List<Semantic.Node> duplicates=new ArrayList<>();
-  for(var node:n){String t=CompletionText.normalize(node.text());if(t.equals("내포인트") || (t.contains("구경") && t.contains("1원"))){var b=node.box();duplicates.add(new Semantic.Node(0,-1,node.text(),new Semantic.Box(b.left()+3,b.top()+3,b.right()+5,b.bottom()+4),false,true,"OCR"));}}
-  return Semantic.inspect(Semantic.mergeOcr(fresh,duplicates));
- }
+ static Semantic.Found inspect(Semantic.Node... n){var fresh=new Semantic.Scene(List.of(n),new Semantic.Box(0,0,1000,2000));return Semantic.inspectOcr(Semantic.ocrScene(fresh,List.of(n)));}
  static Engine.Effect frame(Semantic.Found f){time+=10_000_000L;return engine.frame(new Engine.Frame(engine.generation(),time,"fixture",f,true));}
- static void deliver(Engine.Effect effect,int step,boolean complete){if(effect==null || effect.step()!=step)throw new AssertionError("step "+step);if((step==1 && effect.target().id()!=3) || (step==3 && effect.target().id()!=1))throw new AssertionError("wrong target");audit.action(step,complete,false,false);engine.acknowledge(effect,true,time);}
+ static void deliver(Engine.Effect effect,int step,boolean complete){if(effect==null || effect.step()!=step)throw new AssertionError("step "+step);if((step==1 && !effect.target().text().startsWith("변하는 광고 상품 제목")) || (step==3 && !effect.target().box().equals(new Semantic.Box(100,200,900,260))))throw new AssertionError("wrong target");audit.action(step,complete,false,false);engine.acknowledge(effect,true,time);}
  public static void main(String[] args){
   engine.start(time,3,"fixture");
   String[] anchors={"다시 구경하고 1원 받아요","여기서 혜택 구경하고 1원 받아요","여기서 구경하면 1원 받아요"};
-  var captureGate=new OverlayCaptureGate();
   for(int cycle=0;cycle<3;cycle++){
-   Object request=new Object();long hiddenAt=time;captureGate.hide(request,hiddenAt);
-   if(captureGate.accepts(request,hiddenAt-1,hiddenAt+70_000_000L))throw new AssertionError("old overlay frame accepted");
-   time+=70_000_000L;
-   if(!captureGate.accepts(request,hiddenAt+20_000_000L,time))throw new AssertionError("fresh frame rejected");
-   if(!captureGate.release(request) || captureGate.hidden())throw new AssertionError("overlay not restored");
    var home=inspect(node(1,"내 포인트",200,260,cycle==0,cycle==0?"Accessibility":"OCR"),node(2,anchors[cycle],800,880,false,"OCR"),node(3,"변하는 광고 상품 제목 "+cycle,920,1020,cycle==0,cycle==0?"Accessibility":"OCR"),node(4,"알림 동의하고 1원 받기",1500,1580,true,"Accessibility"));
    var adRequest=frame(home);
-   if(cycle==0){engine.acknowledge(adRequest,true,time);time+=600_000_000L;adRequest=frame(home);if(engine.state!=Engine.State.OPEN_REWARD_AD || engine.actions[0]!=0)throw new AssertionError("HOME falsely confirmed");}
+   if(cycle==0){engine.acknowledge(adRequest,true,time);time+=1_300_000_000L;adRequest=frame(home);if(engine.state!=Engine.State.OPEN_REWARD_AD || engine.actions[0]!=0)throw new AssertionError("HOME falsely confirmed");}
    deliver(adRequest,1,false);
    if(frame(home)!=null || engine.state!=Engine.State.OPEN_REWARD_AD)throw new AssertionError("HOME falsely confirmed");
    if(frame(inspect(node(10,"3초 구경해요",200,260,false,"OCR")))!=null)throw new AssertionError("early BACK");

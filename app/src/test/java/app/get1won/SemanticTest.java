@@ -60,4 +60,10 @@ public class SemanticTest {
   ns.add(n(50,-1,"다시 구경하면 1원 받아요",b(10,780,950,1800),false));ns.add(n(51,-1,"다시 구경하면 1원 받아요",b(40,1500,700,1580),false));assertNull(Semantic.inspect(scene(ns)).anchor());
  }
  @Test public void homeFailureLogNamesEachMissingElement(){String log=Semantic.homeCheck(Semantic.inspect(scene(List.of())));assertTrue(log.contains("points missing"));assertTrue(log.contains("anchor missing"));assertTrue(log.contains("ad missing"));}
+ @Test public void ocrMeaningDoesNotMergeConflictingAccessibilityLabels(){
+  var fresh=scene(home());var text=List.of(n(10,-1,"내 포인트",b(40,200,250,260),false),n(11,-1,"여기서 구경하면 1원 받아요",b(40,800,700,880),false),n(12,-1,"변하는 광고 상품 제목",b(80,930,850,1000),false));
+  var ns=new ArrayList<>(fresh.nodes());ns.add(n(20,-1,"내 포인트",b(100,1600,600,1690),false));
+  var f=Semantic.inspectOcr(Semantic.ocrScene(scene(ns),text));assertTrue(f.home());assertEquals("OCR",f.points().source());assertEquals("OCR",f.anchor().source());assertEquals("OCR",f.ad().source());assertEquals("변하는 광고 상품 제목",f.ad().text());
+ }
+ @Test public void ocrAdExcludesBrandExchangeAndConfirmButtons(){for(String text:List.of("포인트로 브랜드콘 바꿔요","확인하기")){var ns=home();ns.set(5,new Semantic.Node(5,-1,text,b(50,940,900,1020),false,true,"OCR"));assertNull(Semantic.inspectOcr(scene(ns)).ad());}}
 }

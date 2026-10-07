@@ -38,8 +38,8 @@ public class EngineTest {
   e.start(now,1,"target");ack(frame(home()),1);
   assertEquals(Engine.State.OPEN_REWARD_AD,e.state);assertEquals(0,e.actions[0]);
   assertNull(frame(home()));assertEquals(1,e.adAttempts);
-  for(int attempt=2;attempt<=3;attempt++){now+=500_000_000L;ack(frame(home()),1);assertEquals(attempt,e.adAttempts);assertEquals(Engine.State.OPEN_REWARD_AD,e.state);assertEquals(0,e.actions[0]);}
-  now+=500_000_000L;assertNull(frame(home()));assertEquals(Engine.State.PAUSED,e.state);assertEquals(3,e.adAttempts);assertArrayEquals(new long[]{0,0,0,0},e.actions);
+  for(int attempt=2;attempt<=3;attempt++){now+=1_200_000_000L;ack(frame(home()),1);assertEquals(attempt,e.adAttempts);assertEquals(Engine.State.OPEN_REWARD_AD,e.state);assertEquals(0,e.actions[0]);}
+  now+=1_200_000_000L;assertNull(frame(home()));assertEquals(Engine.State.PAUSED,e.state);assertEquals(3,e.adAttempts);assertArrayEquals(new long[]{0,0,0,0},e.actions);
  }
  @Test public void completionAsFirstAdFrameConfirmsAndBacksImmediately(){
   e.start(now,1,"target");ack(frame(home()),1);Engine.Effect back=frame(reward(true,false));assertEquals(2,back.step());assertEquals(now,back.time());assertEquals(1,e.actions[0]);
@@ -49,9 +49,9 @@ public class EngineTest {
  }
  @Test public void rejectedRequestDoesNotConfirmUntilAcceptedRetry(){
   e.start(now,1,"target");var first=frame(home());e.acknowledge(first,false,now);assertNull(frame(reward(false,true)));assertEquals(0,e.actions[0]);
-  now+=500_000_000L;ack(frame(home()),1);assertNull(frame(reward(false,true)));assertEquals(1,e.actions[0]);
+  now+=1_200_000_000L;ack(frame(home()),1);assertNull(frame(reward(false,true)));assertEquals(1,e.actions[0]);
  }
  @Test public void stopInvalidatesAdRetryAndConfirmation(){
-  e.start(now,1,"target");ack(frame(home()),1);now+=500_000_000L;var retry=frame(home());long gen=e.generation();e.stop();e.acknowledge(retry,true,now);assertNull(e.frame(new Engine.Frame(gen,now+1,"target",reward(false,true),true)));assertEquals(0,e.actions[0]);
+  e.start(now,1,"target");ack(frame(home()),1);now+=1_200_000_000L;var retry=frame(home());long gen=e.generation();e.stop();e.acknowledge(retry,true,now);assertNull(e.frame(new Engine.Frame(gen,now+1,"target",reward(false,true),true)));assertEquals(0,e.actions[0]);
  }
 }
