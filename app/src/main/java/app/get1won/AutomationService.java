@@ -77,7 +77,8 @@ public final class AutomationService extends AccessibilityService {
             else if(engine.active() && guard(s)) {
                 Semantic.Found f=Semantic.inspect(s.scene);
                 long epoch=engine.actionEpoch,cycle=engine.cycleId;Engine.State state=engine.state;
-                evaluate(s,f);
+                if(engine.historyFallbackBeforeRetry(f,lastScan) && !engine.expired(lastScan))requestOcr(s);
+                else evaluate(s,f);
                 if(engine.active() && epoch==engine.actionEpoch && cycle==engine.cycleId && state==engine.state && engine.needsOcr(f,lastScan))requestOcr(s);
             }
         } catch(RuntimeException e){Diagnostics.error(e);engine.pause("화면 분석 오류로 멈췄어요.");}

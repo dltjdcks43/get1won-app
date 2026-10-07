@@ -60,4 +60,13 @@ public class UniversalTest {
         assertNull(e.observe(Semantic.inspect(SemanticTest.scene(a,b,complete)),now++));assertEquals(0,e.actions[1]);
     }
     @Test public void resourceIdAloneCannotInventPointsLabel(){var n=new Semantic.Node(1,-1,"",new Semantic.Box(20,200,700,260),true,true,"Accessibility","","target:id/points");assertNull(Semantic.inspect(SemanticTest.scene(n)).points());}
+    @Test public void historyOcrBeforeRetryWhenOnlyPointsLabelRemains(){
+        var d=pointsRequest();submit(d);now+=1000;
+        assertTrue(e.historyFallbackBeforeRetry(points(),now));assertTrue(e.needsOcr(points(),now));
+        var fresh=SemanticTest.scene(SemanticTest.access("내 포인트",200,260));
+        var merged=Semantic.mergeOcr(fresh,List.of(SemanticTest.access("포인트 내역",400,460),SemanticTest.access("적립 +1원",600,660),SemanticTest.access("사용 -2원",800,860)));
+        var f=Semantic.inspect(merged);assertFalse(e.historyFallbackBeforeRetry(f,now));
+        assertEquals(Engine.Action.BACK_HISTORY,e.observe(f,now).action());assertEquals(1,e.actions[2]);
+    }
+    @Test public void pointsLabelWithMissingHistoryStillTimesOut(){var d=pointsRequest();submit(d);assertNull(e.observe(points(),now+30000));assertEquals(Engine.State.PAUSED,e.state);assertEquals(0,e.actions[2]);}
 }

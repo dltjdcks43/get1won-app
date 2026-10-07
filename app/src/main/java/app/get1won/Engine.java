@@ -32,10 +32,14 @@ public final class Engine {
             case AD_ENTRY -> f.home() ? f.ad()==null && now-lastTap>=1000 : f.waiting()==null && f.complete()==null;
             case REWARD -> f.waiting()==null && f.complete()==null;
             case WAIT_FOR_POINTS,HOME_AFTER_HISTORY -> f.points()==null;
-            case POINTS_ENTRY -> !f.history() && f.points()==null;
+            case POINTS_ENTRY -> !f.history() && now-lastPointsTap>=1000;
             case HISTORY -> !f.history();
             default -> false;
         };
+    }
+    /** Missing history evidence can require OCR even when the page still has a points label. */
+    public boolean historyFallbackBeforeRetry(Semantic.Found f,long now) {
+        return state==State.POINTS_ENTRY && !busy() && !f.history() && !f.home() && now-lastPointsTap>=1000;
     }
     private Decision decide(Action a,Semantic.Node n,int attempt) {
         reserved=++actionEpoch;

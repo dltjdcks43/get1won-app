@@ -22,3 +22,5 @@
 - 실기기/에뮬레이터/connectedAndroidTest는 실행하지 않음. 실제 제조사 클릭, window geometry, ML Kit 속도/정확도는 beta 기기 검증으로 남음.
 
 자체 점검: 광고 anchor 지연이나 600개 tree 제한만으로 이미 찾은 points를 거부하는 의존성은 제거했습니다. 다만 실제 target을 OS/OCR 어느 쪽에서도 찾을 수 없거나 모호한 화면은 클릭하지 않습니다. Android 요청 수락 또는 gesture 완료만으로 내역 진입 성공을 세는 경로는 없습니다.
+
+최종 전달 검토에서 내역 대기 중 points label만 남으면 history OCR을 생략할 수 있던 경로를 보완했습니다. 실제 native history는 즉시 수락하고, 불완전한 화면에서는 재클릭 전에 OCR로 history를 검사합니다. 이에 대한 병합/timeout 회귀 테스트를 추가했습니다.

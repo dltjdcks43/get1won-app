@@ -72,8 +72,8 @@ public class EngineTest {
     @Test public void rejectedPointsSubmissionAlsoHasBoundedRetry() {
         requestPoints(false);assertEquals(Engine.State.POINTS_ENTRY,engine.state);assertEquals(2,engine.observe(home(),1200).attempt());
     }
-    @Test public void pointsAccessibilityTargetDoesNotRequireOcrAtRetryTime() {
-        requestPoints(true);assertFalse(engine.needsOcr(text("내 포인트"),1199));assertFalse(engine.needsOcr(text("내 포인트"),1200));assertTrue(engine.needsOcr(text("알 수 없는 화면"),1200));
+    @Test public void pointsLabelDoesNotSuppressHistoryOcrAtRetryTime() {
+        requestPoints(true);assertFalse(engine.needsOcr(text("내 포인트"),1199));assertTrue(engine.needsOcr(text("내 포인트"),1200));assertTrue(engine.needsOcr(text("알 수 없는 화면"),1200));
     }
     @Test public void pointsTimeoutNeverBacksOrCountsSuccess() {
         requestPoints(true);assertNull(engine.observe(text("알 수 없는 화면"),30200));assertEquals(Engine.State.PAUSED,engine.state);assertEquals(0,engine.actions[2]);
