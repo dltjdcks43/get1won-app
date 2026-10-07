@@ -79,6 +79,18 @@ public class EngineTest {
     @Test public void pointsTimeoutNeverBacksOrCountsSuccess() {
         requestPoints(true);assertNull(engine.observe(text("알 수 없는 화면"),30200));assertEquals(Engine.State.PAUSED,engine.state);assertEquals(0,engine.actions[2]);
     }
+    @Test public void pointsOnlyHomeReturnStartsNextCycleWithoutWaitingForRewardAnchor() {
+        requestPoints(true);
+        var back=engine.observe(text("전체","방문 적립 +1원","포인트 사용 -2원"),300);
+        engine.submitted(back,true,300);
+        long cycle=engine.cycleId;
+        assertNull(engine.observe(text("내 포인트"),400));
+        assertEquals(cycle+1,engine.cycleId);
+        assertEquals(Engine.State.HOME,engine.state);
+        var next=engine.observe(home(),500);
+        assertNotNull(next);
+        assertEquals(Engine.Action.AD,next.action());
+    }
     @Test public void stoppedPointsRequestAndObservationsCannotResumeSession() {
         requestPoints(true);var retry=engine.observe(home(),1200);long[] before=engine.actions.clone();engine.stop();
         engine.submitted(retry,true,1300);assertNull(engine.observe(text("전체","방문 적립 +1원","포인트 사용 -2원"),1400));
