@@ -49,7 +49,7 @@ public final class CaptureService extends Service {
     }
     private void open() { main.post(()->{if(!closing && openWhenReady && ready && AppState.capturing && AppState.accessibility!=null){openWhenReady=false;AppState.accessibility.openSession();}}); }
     @Override public int onStartCommand(Intent intent,int flags,int id) {
-        if(intent==null || "STOP".equals(intent.getAction())) { stopSelf();return START_NOT_STICKY; }
+        if(intent==null || "STOP".equals(intent.getAction())) { if(AppState.accessibility!=null)AppState.accessibility.onCaptureStopped();stopSelf();return START_NOT_STICKY; }
         openWhenReady=intent.getBooleanExtra("openSession",false);
         if(projection!=null){open();return START_NOT_STICKY;}
         NotificationManager nm=getSystemService(NotificationManager.class);nm.createNotificationChannel(new NotificationChannel("capture","화면 확인",NotificationManager.IMPORTANCE_LOW));
@@ -130,7 +130,7 @@ public final class CaptureService extends Service {
     }
     private void release(Runnable action) { try{action.run();}catch(RuntimeException e){Diagnostics.error(e);} }
     @Override public void onDestroy() {
-        closing=true;instance=null;ready=false;AppState.capturing=false;main.removeCallbacksAndMessages(null);
+        closing=true;stopForeground(STOP_FOREGROUND_REMOVE);instance=null;ready=false;AppState.capturing=false;main.removeCallbacksAndMessages(null);
         if(AppState.accessibility!=null)AppState.accessibility.onCaptureStopped();
         worker.post(()->{wanted=null;if(display!=null)release(display::release);if(reader!=null)release(reader::close);if(projection!=null)release(projection::stop);if(recognizer!=null)release(recognizer::close);thread.quitSafely();});
         super.onDestroy();

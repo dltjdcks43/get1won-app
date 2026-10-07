@@ -26,10 +26,18 @@ jobs:
         run: sdkmanager 'platforms;android-36' 'build-tools;35.0.0'
       - name: Unit tests, lint, debug APK
         run: bash ./gradlew --no-daemon testDebugUnitTest lintDebug assembleDebug
+      - name: Name APK with source commit
+        id: apk
+        shell: bash
+        run: |
+          short_sha=$(git rev-parse --short=8 HEAD)
+          apk_name="get1won-v2-${short_sha}-debug"
+          cp app/build/outputs/apk/debug/app-debug.apk "app/build/outputs/apk/debug/${apk_name}.apk"
+          echo "name=${apk_name}" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@v4
         with:
-          name: get1won-debug-apk
-          path: app/build/outputs/apk/debug/app-debug.apk
+          name: ${{ steps.apk.outputs.name }}
+          path: app/build/outputs/apk/debug/${{ steps.apk.outputs.name }}.apk
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         if: always()

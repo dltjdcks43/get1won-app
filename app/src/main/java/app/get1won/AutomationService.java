@@ -35,7 +35,7 @@ public final class AutomationService extends AccessibilityService {
     public void resizePanel() { main.post(this::updatePanel); }
     public void openSession() { main.post(()->{if(closed)return;session=true;updatePanel();}); }
     public void closeSession() { endSession();stopService(new Intent(this,CaptureService.class)); }
-    public void onCaptureStopped() { main.post(this::endSession); }
+    public void onCaptureStopped() { if(Looper.myLooper()==main.getLooper()) endSession();else main.post(this::endSession); }
     private void endSession() { engine.stop();session=false;pending=null;main.removeCallbacks(scanTask);updatePanel(); }
     private void begin() {
         if(!CaptureService.ready || !AppState.capturing) return;
@@ -124,12 +124,12 @@ public final class AutomationService extends AccessibilityService {
             // No sleep, delayed callback or extra confirmation after a valid completion observation.
             accepted=performGlobalAction(GLOBAL_ACTION_BACK);
         } else {
-            Semantic.Node target=decision.action()==Engine.Action.POINTS?Semantic.clickParent(s.scene,decision.target()):decision.target();
+            Semantic.Node target=decision.action()==Engine.Action.POINTS && decision.attempt()==1?Semantic.clickParent(s.scene,decision.target()):decision.target();
             if(movePanelAway(target.box())) { pending=null;revision++;schedule(400);return; }
             AccessibilityNodeInfo handle=s.handles.get(target.id());
             if(decision.attempt()==1 && target.clickable() && handle!=null) accepted=handle.performAction(AccessibilityNodeInfo.ACTION_CLICK);
             else {
-                Semantic.Box b=target.box();float x=decision.attempt()==3?b.left()+b.width()*.65f:b.cx();
+                Semantic.Box b=target.box();float x=decision.action()==Engine.Action.AD && decision.attempt()==3?b.left()+b.width()*.65f:b.cx();
                 Path path=new Path();path.moveTo(x,b.cy());
                 accepted=dispatchGesture(new GestureDescription.Builder().addStroke(new GestureDescription.StrokeDescription(path,0,80)).build(),null,null);
             }
@@ -171,7 +171,7 @@ public final class AutomationService extends AccessibilityService {
         panel=new LinearLayout(this);panel.setOrientation(LinearLayout.VERTICAL);panel.setPadding(dp(6),dp(4),dp(6),dp(4));panel.setBackgroundColor(0xEEFFFFFF);
         status=new TextView(this);status.setTextColor(Color.BLACK);panel.addView(status);
         start=new Button(this);start.setText("시작");start.setOnClickListener(v->begin());panel.addView(start);
-        stop=new Button(this);stop.setText("중지");stop.setOnClickListener(v->{engine.stop();pending=null;main.removeCallbacks(scanTask);updatePanel();Diagnostics.record(engine);});panel.addView(stop);
+        stop=new Button(this);stop.setText("중지");stop.setOnClickListener(v->{closeSession();Diagnostics.record(engine);});panel.addView(stop);
         panelParams=new WindowManager.LayoutParams(dp(150),-2,WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,PixelFormat.TRANSLUCENT);
         panelParams.gravity=Gravity.TOP|Gravity.RIGHT;panelParams.y=dp(40);panel.setVisibility(View.GONE);wm.addView(panel,panelParams);
     }

@@ -20,6 +20,11 @@ public class ThreeCycleTest {
         while(SystemClock.uptimeMillis()<end) { if(check.ok())return;SystemClock.sleep(200); }
         fail(message+"\n"+AppState.advanced());
     }
+    private boolean projectionRunning() {
+        try { return device.executeShellCommand("dumpsys media_projection").contains("app.get1won"); }
+        catch(java.io.IOException e) { throw new AssertionError(e); }
+    }
+    @SuppressWarnings("deprecation")
     @Test public void threeExternalApplicationCycles() throws Exception {
         Configurator.getInstance().setUiAutomationFlags(UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES);
         device=UiDevice.getInstance(instrumentation);device.wakeUp();device.executeShellCommand("wm dismiss-keyguard");
@@ -47,6 +52,26 @@ public class ThreeCycleTest {
             String audit=device.executeShellCommand("run-as app.get1won.fixture cat files/audit.txt").trim();
             assertEquals("cycles=3 ad=3 points=3 rewardBack=3 historyBack=3 earlyBack=0 wrongClick=0",audit);
             android.util.Log.i("V2ThreeCycle",audit);
+            var version=AppVersion.read(instrumentation.getTargetContext());
+            assertEquals(BuildConfig.VERSION_NAME,version.name());assertEquals(BuildConfig.VERSION_CODE,version.code());
+            assertEquals(BuildConfig.GIT_SHA,version.build());assertTrue(version.footer().contains(version.name()));
+            assertNotEquals("unknown",version.build());
+            // Separate one-shot shutdown check while automation is running; no fourth completed cycle.
+            start=device.wait(Until.findObject(By.pkg("app.get1won").text("시작")),5000);assertNotNull(start);start.click();
+            until(()->AppState.engine.state==Engine.State.REWARD,15000,"Running before stop");
+            long[] beforeStop=AppState.engine.actions.clone();
+            String auditBeforeStop=device.executeShellCommand("run-as app.get1won.fixture cat files/audit.txt").trim();
+            UiObject2 stop=device.wait(Until.findObject(By.pkg("app.get1won").text("중지")),5000);assertNotNull(stop);stop.click();
+            until(()->!AppState.engine.active() && !AppState.accessibility.sessionActive() && !AppState.capturing && !CaptureService.ready,5000,"Whole session stopped");
+            until(()->instrumentation.getTargetContext().getSystemService(android.app.NotificationManager.class).getActiveNotifications().length==0,5000,"Capture notification removed");
+            assertNull(device.findObject(By.pkg("app.get1won").text("중지")));
+            assertNull(device.findObject(By.pkg("app.get1won").text("시작")));
+            until(()->!projectionRunning(),5000,"MediaProjection actually stopped");
+            assertFalse(instrumentation.getTargetContext().getSystemService(android.app.ActivityManager.class).getRunningServices(100).stream().anyMatch(service->service.service.getClassName().equals(CaptureService.class.getName())));
+            SystemClock.sleep(1500);
+            assertArrayEquals(beforeStop,AppState.engine.actions);
+            assertEquals(auditBeforeStop,device.executeShellCommand("run-as app.get1won.fixture cat files/audit.txt").trim());
+            android.util.Log.i("V2Stop","PASS engine/session/overlay/capture/projection/notification stopped; subsequent actions=0");
         } finally {
             instrumentation.runOnMainSync(()->{if(AppState.accessibility!=null)AppState.accessibility.closeSession();});
             if(previous.equals("null"))device.executeShellCommand("settings delete secure enabled_accessibility_services");
