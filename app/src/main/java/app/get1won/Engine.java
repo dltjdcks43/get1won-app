@@ -19,6 +19,11 @@ public final class Engine {
     public boolean busy() { return reserved!=0 || gesture!=0; }
     public void start(int repeats,long now) { generation++;cycleId++;completed=0;limit=repeats;attempts=0;pointsAttempts=0;reserved=gesture=0;Arrays.fill(actions,0);lastSuccess="없음";move(State.HOME,now); }
     public void stop() { generation++;reserved=gesture=0;state=State.IDLE;reason="중지했어요."; }
+    /** Same-app navigation invalidates input/OCR handles, not the ongoing screen goal. */
+    public void windowChanged() {
+        generation++;actionEpoch++;reserved=gesture=0;
+        log.accept("같은 앱의 새 window 재관찰: 이전 target/OCR/gesture 폐기");
+    }
     public void settingsChanged() { stop(); }
     public void pause(String message) { generation++;reserved=gesture=0;state=State.PAUSED;reason=message;log.accept("일시정지: "+message); }
     public void fail(String message) { pause(message); }
@@ -56,7 +61,7 @@ public final class Engine {
         if(expired(now)) { log.accept(f.failure());pause(state==State.POINTS_ENTRY?"내 포인트를 열지 못했어요.":"화면 전환을 확인하지 못해 멈췄어요. state="+state);return null; }
         if(busy())return null;
         switch(state) {
-            case HOME -> { if(f.home() && f.ad()!=null && !f.history() && f.waiting()==null && f.complete()==null) return decide(Action.AD,f.ad(),1); }
+            case HOME -> { if(f.home() && f.ad()!=null) return decide(Action.AD,f.ad(),1); }
             case AD_ENTRY -> {
                 if(!f.home() && !f.history() && (f.waiting()!=null || f.complete()!=null)) {
                     success(0,"광고 화면 진입");move(State.REWARD,now);

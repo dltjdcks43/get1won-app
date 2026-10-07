@@ -8,7 +8,11 @@ public final class ObservationGate {
     public void bind(String pkg,int window){target=new TargetWindow(pkg,window);}
     public boolean window(String pkg,int id){
         if(!engine.active() || target==null)return false;
-        if(!target.matches(pkg,id)){engine.pause("대상 앱/window가 바뀌어 멈췄어요. 다시 시작해주세요.");return false;}
+        if(!target.pkg().equals(pkg)){engine.pause("다른 앱으로 전환되어 멈췄어요.");return false;}
+        if(target.id()!=id){
+            log.accept("window 변경 "+target.id()+" → "+id+" / package 유지");
+            target=new TargetWindow(pkg,id);engine.windowChanged();
+        }
         return true;
     }
     public boolean current(OcrTicket t){return engine.active() && t.current(engine.generation,engine.cycleId,engine.state,engine.actionEpoch);}

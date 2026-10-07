@@ -19,7 +19,6 @@ public final class AutomationService extends AccessibilityService {
     private boolean session,closed,analysisOnly;
     private long lastScan,ocrSequence,lastOcrRequest;
     private String diagnostic="";
-    private TargetWindow target;
     private OcrTicket pending;
     private WindowOcr ocr;
     private final Set<String> pointsIds=new HashSet<>();
@@ -45,11 +44,10 @@ public final class AutomationService extends AccessibilityService {
     }
     private void begin() {
         if(!session || closed)return;
-        pending=null;target=null;pointsIds.clear();
+        pending=null;pointsIds.clear();
         try(Snapshot s=snapshot()) {
             if(s==null || s.pkg.equals(getPackageName())) { engine.pause("대상 앱 화면을 열어주세요.");updatePanel();return; }
-            if(analysisOnly){analysisOnly=false;diagnostic=Semantic.inspect(s.scene).summary();return;}
-            target=new TargetWindow(s.pkg,s.window);
+            if(analysisOnly){analysisOnly=false;diagnostic=Semantic.diagnostics(s.scene,Semantic.inspect(s.scene));return;}
             engine.start(AppState.profile.repeats,SystemClock.uptimeMillis());observations.bind(s.pkg,s.window);
             AppState.log("시작 target package="+s.pkg+" window="+s.window);
         } catch(RuntimeException e){Diagnostics.error(e);engine.pause("시작 화면을 읽지 못했어요.");}
@@ -66,7 +64,12 @@ public final class AutomationService extends AccessibilityService {
         main.removeCallbacks(scanTask);main.postDelayed(scanTask,delay);
     }
     private final Runnable scanTask=this::scan;
-    private boolean guard(Snapshot s) {return observations.window(s.pkg,s.window);}
+    private boolean guard(Snapshot s) {
+        long generation=engine.generation;
+        boolean valid=observations.window(s.pkg,s.window);
+        if(generation!=engine.generation){pending=null;pointsIds.clear();}
+        return valid;
+    }
     private void scan() {
         if(closed || !session || !engine.active()){updatePanel();return;}
         lastScan=SystemClock.uptimeMillis();
@@ -114,14 +117,16 @@ public final class AutomationService extends AccessibilityService {
         return !closed && session && engine.active() && t==pending && t.current(engine.generation,engine.cycleId,engine.state,engine.actionEpoch);
     }
     private void evaluate(Snapshot s,Semantic.Found f) {
-        diagnostic="package="+s.pkg+" window="+s.window+" nodes="+s.count+" partial="+s.partial+"\n"+f.summary();
+        diagnostic="package="+s.pkg+" window="+s.window+" nodes="+s.count+" partial="+s.partial+"\n"+(engine.state==Engine.State.HOME?Semantic.diagnostics(s.scene,f):f.summary());
         if(!f.summary().equals(engine.lastSemanticResult))AppState.log(diagnostic);
         Engine.Decision decision=engine.observe(f,SystemClock.uptimeMillis());
         if(decision==null)return;
         // Recheck the window immediately before dispatch. Handles are scoped to this snapshot only.
         try(WindowIdentity live=window()) {
             if(live==null){engine.defer(decision);return;}
-            if(target==null || !target.matches(live.pkg,live.id)){engine.pause("동작 직전 대상 window가 바뀌었어요.");return;}
+            if(!s.pkg.equals(live.pkg) || s.window!=live.id){
+                engine.defer(decision);observations.window(live.pkg,live.id);pending=null;pointsIds.clear();schedule(0);return;
+            }
         }
         pending=null;
         if(decision.action()==Engine.Action.BACK_REWARD || decision.action()==Engine.Action.BACK_HISTORY) {
@@ -149,7 +154,8 @@ public final class AutomationService extends AccessibilityService {
             private void result(boolean completed){
                 if(!engine.current(decision) || closed || !session)return;
                 try(WindowIdentity live=window()) {
-                    if(live==null || target==null || !target.matches(live.pkg,live.id)){engine.pause("gesture 응답 시 대상 window를 확인하지 못했어요.");updatePanel();return;}
+                    if(live!=null && !observations.window(live.pkg,live.id)){updatePanel();return;}
+                    if(!engine.current(decision)){pending=null;pointsIds.clear();schedule(0);return;}
                 }
                 engine.gestureResult(decision,completed,SystemClock.uptimeMillis());schedule(0);
             }
@@ -164,7 +170,7 @@ public final class AutomationService extends AccessibilityService {
         List<AccessibilityWindowInfo> windows=getWindows();AccessibilityWindowInfo chosen=null;
         try {
             for(AccessibilityWindowInfo w:windows) {
-                if(w.getType()==AccessibilityWindowInfo.TYPE_APPLICATION && (chosen==null || w.getLayer()>chosen.getLayer()))chosen=w;
+                if(w.getType()==AccessibilityWindowInfo.TYPE_APPLICATION && (w.isActive() || w.isFocused()) && (chosen==null || w.getLayer()>chosen.getLayer()))chosen=w;
             }
             if(chosen==null)return null;
             for(AccessibilityWindowInfo w:windows) {

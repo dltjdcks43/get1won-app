@@ -27,6 +27,9 @@ public final class Semantic {
         public String failure() { return "HOME FAIL reason: "+(points==null?"points missing; ":"")+(anchor==null?"anchor missing; ":"")+(ad==null?"ad missing":""); }
     }
     private static String describe(Node n) { return n==null?"not found":"found source="+n.source+" bounds="+n.box; }
+    // Match the v2.2 adapter: use description only when the text is empty.
+    static String label(Node n) { return n.text.isBlank()?n.description:n.text; }
+    static boolean points(String s) { return s.equals("내포인트") || s.matches("내포인트[0-9,]+(?:[Pp]|원|포인트)?[›>]?$"); }
     static boolean anchor(String s) { return s.contains("구경") && s.contains("1원") && s.contains("받"); }
     static boolean samePosition(Box a, Box b) {
         long intersection=(long)Math.max(0,Math.min(a.right,b.right)-Math.max(a.left,b.left))*Math.max(0,Math.min(a.bottom,b.bottom)-Math.max(a.top,b.top));
@@ -42,9 +45,24 @@ public final class Semantic {
     /** Pairwise agreement prevents a large container from bridging distant duplicate labels. */
     static Node unique(List<Node> nodes, Predicate<String> matcher) {
         List<Node> candidates=nodes.stream().filter(n->n.enabled && (matcher.test(normalize(n.text)) || matcher.test(normalize(n.description)))).toList();
+        Map<Integer,Node> byId=new HashMap<>();
+        for(Node n:nodes)if(n.id>=0)byId.put(n.id,n);
+        List<Node> all=candidates;
+        candidates=all.stream().filter(n->all.stream().noneMatch(child->child!=n && isAncestor(n,child,byId))).toList();
         for(int i=0;i<candidates.size();i++) for(int j=i+1;j<candidates.size();j++)
             if(!samePosition(candidates.get(i).box,candidates.get(j).box)) return null;
         return candidates.stream().min(Comparator.comparingInt((Node n)->n.source.equals("Accessibility")?0:1).thenComparingLong(n->(long)n.box.width()*n.box.height())).orElse(null);
+    }
+    private static boolean isAncestor(Node ancestor,Node child,Map<Integer,Node> byId) {
+        if(ancestor.id<0 || child.id<0 || !ancestor.source.equals("Accessibility") || !child.source.equals("Accessibility") || !ancestor.box.contains(child.box))return false;
+        Node cursor=child;
+        for(int depth=0;depth<32 && cursor.parent>=0;depth++) {
+            cursor=byId.get(cursor.parent);if(cursor==null)return false;
+            if(cursor.id==ancestor.id)return true;
+            // A priority-query copy can have another snapshot id, but the same native bounds/label.
+            if(cursor.box.equals(ancestor.box) && cursor.text.equals(ancestor.text) && cursor.description.equals(ancestor.description) && cursor.resourceId.equals(ancestor.resourceId))return true;
+        }
+        return false;
     }
     private static boolean adjacent(Node a, Node b) {
         Box x=a.box,y=b.box; int overlap=Math.min(x.right,y.right)-Math.max(x.left,y.left);
@@ -54,13 +72,13 @@ public final class Semantic {
     private static List<Node> blocks(List<Node> original) {
         List<Node> result=new ArrayList<>(original);
         for(int i=0;i<original.size();i++) {
-            Node a=original.get(i); String x=normalize(a.text);
+            Node a=original.get(i); String x=normalize(label(a));
             if(!(x.contains("구경") || x.contains("1원") || x.contains("3초"))) continue;
             for(int j=i+1;j<original.size();j++) {
-                Node b=original.get(j); String y=normalize(b.text),joined=x+y;
+                Node b=original.get(j); String y=normalize(label(b)),joined=x+y;
                 if(!a.enabled || !b.enabled || !adjacent(a,b)) continue;
                 if((!anchor(x) && !anchor(y) && anchor(joined)) || (!waiting(x) && !waiting(y) && waiting(joined)) || (!complete(x) && !complete(y) && complete(joined)))
-                    result.add(new Node(-1,-1,a.text+" "+b.text,a.box.union(b.box),false,true,a.source.equals(b.source)?a.source:"Accessibility+OCR"));
+                    result.add(new Node(-1,-1,label(a)+" "+label(b),a.box.union(b.box),false,true,a.source.equals(b.source)?a.source:"Accessibility+OCR"));
             }
         }
         return result;
@@ -69,7 +87,7 @@ public final class Semantic {
     static boolean complete(String s) { return s.contains("1원") && s.contains("받았"); }
     public static Found inspect(Scene scene) {
         List<Node> blocks=blocks(scene.nodes);
-        Node points=unique(blocks,s->s.equals("내포인트")),anchor=unique(blocks,Semantic::anchor);
+        Node points=unique(blocks,Semantic::points),anchor=unique(blocks,Semantic::anchor);
         Node waiting=unique(blocks,Semantic::waiting),complete=unique(blocks,Semantic::complete);
         // Any waiting observation vetoes completion, even when waiting itself is ambiguous.
         if(waiting==null) waiting=blocks.stream().filter(n->n.enabled && (waiting(normalize(n.text)) || waiting(normalize(n.description)))).findFirst().orElse(null);
@@ -82,11 +100,7 @@ public final class Semantic {
     private static Node ad(Scene scene, Node anchor) {
         List<Node> cards=new ArrayList<>();
         for(Node n:scene.nodes) {
-            Box b=n.box,a=anchor.box;
-            if(!n.enabled || b.top<a.bottom || b.top-a.bottom>Math.min(scene.screen.height()/4,a.height()*6) || b.width()<Math.max(a.width()/3,scene.screen.width()/5) || b.height()<a.height()/4 || b.height()>scene.screen.height()/4 || b.width()<b.height()*1.4 || Math.min(a.right,b.right)-Math.max(a.left,b.left)<=0 || (excluded(n.text) || excluded(n.description))) continue;
-            boolean badChild=scene.nodes.stream().anyMatch(c->b.contains(c.box) && (excluded(c.text) || excluded(c.description)));
-            boolean title=!normalize(n.text).isEmpty() || !normalize(n.description).isEmpty() || scene.nodes.stream().anyMatch(c->b.contains(c.box) && normalize(c.text).length()>1);
-            if(!badChild && title && (n.clickable || !normalize(n.text).isEmpty() || !normalize(n.description).isEmpty())) cards.add(n);
+            if(adRejection(scene,anchor,n)==null)cards.add(n);
         }
         cards.sort(Comparator.comparingInt((Node n)->n.box.top).thenComparingInt(n->n.clickable?0:1));
         if(cards.isEmpty()) return null;
@@ -94,6 +108,57 @@ public final class Semantic {
         for(Node n:cards) if(n.clickable && n.box.contains(first.box)) { first=n; break; }
         for(Node n:cards) if(n!=first && Math.abs(n.box.top-first.box.top)<anchor.box.height() && !n.box.contains(first.box) && !first.box.contains(n.box) && !samePosition(n.box,first.box)) return null;
         return first;
+    }
+    private static String adRejection(Scene scene,Node anchor,Node n) {
+        Box b=n.box,a=anchor.box;
+        if(!n.enabled)return "disabled";
+        if(b.top<a.bottom)return "above_anchor";
+        if(b.top-a.bottom>Math.min(scene.screen.height()/4,a.height()*6))return "too_far_below_anchor";
+        if(b.width()<Math.max(a.width()/3,scene.screen.width()/5))return "too_narrow";
+        if(b.height()<a.height()/4 || b.height()>scene.screen.height()/4)return "height_outside_card_range";
+        if(b.width()<b.height()*1.4)return "not_horizontal_card";
+        if(Math.min(a.right,b.right)-Math.max(a.left,b.left)<=0)return "outside_anchor_column";
+        if(excluded(label(n)))return "excluded_label";
+        if(scene.nodes.stream().anyMatch(c->b.contains(c.box) && excluded(label(c))))return "excluded_child";
+        boolean title=!normalize(label(n)).isEmpty() || scene.nodes.stream().anyMatch(c->b.contains(c.box) && normalize(label(c)).length()>1);
+        if(!title)return "no_title";
+        return n.clickable || !normalize(label(n)).isEmpty()?null:"no_clickable_or_text_target";
+    }
+    /** Bounded diagnostic text, only in the in-memory advanced log; not persisted by Diagnostics. */
+    public static String diagnostics(Scene scene,Found found) {
+        List<Node> blocks=blocks(scene.nodes);
+        StringBuilder out=new StringBuilder(found.summary());
+        explain(out,"points",found.points,blocks,Semantic::points);
+        explain(out,"anchor",found.anchor,blocks,Semantic::anchor);
+        out.append("\nad=").append(describe(found.ad));
+        if(found.ad!=null)out.append(detail(found.ad));
+        else if(found.anchor==null)out.append(" reason=anchor_missing_or_ambiguous");
+        else {
+            Map<String,Integer> reasons=new TreeMap<>();int eligible=0;
+            for(Node n:scene.nodes){String why=adRejection(scene,found.anchor,n);if(why==null)eligible++;else reasons.merge(why,1,Integer::sum);}
+            out.append(" reason=").append(eligible>0?"ambiguous_cards":"no_eligible_card").append(" rejected=").append(reasons);
+        }
+        return out.toString();
+    }
+    private static void explain(StringBuilder out,String name,Node selected,List<Node> nodes,Predicate<String> matcher) {
+        out.append("\n").append(name).append("=").append(describe(selected));
+        if(selected!=null){out.append(detail(selected));return;}
+        List<Node> matches=nodes.stream().filter(n->n.enabled && (matcher.test(normalize(n.text)) || matcher.test(normalize(n.description)))).toList();
+        out.append(" reason=").append(matches.isEmpty()?"no_matching_label":"ambiguous_distinct_targets");
+        if(matches.isEmpty())matches=nodes.stream().filter(n->name.equals("points")?(normalize(n.text).contains("내포인트") || normalize(n.description).contains("내포인트")):(label(n).contains("구경") || label(n).contains("1원"))).toList();
+        for(Node n:matches.stream().limit(4).toList())out.append(" candidate{").append(describe(n)).append(detail(n)).append("}");
+    }
+    private static String detail(Node n) {
+        String text=normalize(n.text),desc=normalize(n.description);
+        boolean description=n.text.isBlank() || (!points(text) && !anchor(text) && (points(desc) || anchor(desc)));
+        return " text="+diagnosticText(n.text)+" description="+diagnosticText(n.description)+" selector="+(description?"description":"text")+" clickable="+n.clickable;
+    }
+    private static String diagnosticText(String text) {
+        String s=normalize(text);
+        if(s.isEmpty())return "[empty]";
+        if(!(s.contains("내포인트") || s.contains("구경") || s.contains("동의") || s.contains("알림")))return "[제목/기타 문구 생략]";
+        s=s.replaceAll("[0-9][0-9,]*", "#");
+        return s.substring(0,Math.min(64,s.length()));
     }
     private static boolean history(List<Node> nodes) {
         boolean tab=unique(nodes,s->s.equals("전체"))!=null;

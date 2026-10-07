@@ -9,7 +9,7 @@ public class ObservationGateTest {
     private final Semantic.Scene fresh=SemanticTest.home("구경하면 1원 받아요","광고");
     private OcrTicket start(){e.start(0,100);gate.bind("target",4);return new OcrTicket(1,e.generation,e.cycleId,e.state,e.actionEpoch,4,"target",100,"original",fresh.screen(),new Semantic.Box(0,0,0,0));}
     @Test public void S_otherAppPausesBeforeDecision(){start();assertFalse(gate.window("other",4));assertEquals(Engine.State.PAUSED,e.state);assertNull(e.observe(Semantic.inspect(fresh),200));}
-    @Test public void T_otherWindowInvalidatesOcrAndActions(){var t=start();assertNull(gate.merge(t,fresh,List.of(),"target",5,110,200));assertEquals(Engine.State.PAUSED,e.state);assertNull(e.observe(Semantic.inspect(fresh),200));}
+    @Test public void T_sameAppWindowInvalidatesOldOcrWithoutPausing(){var t=start();assertNull(gate.merge(t,fresh,List.of(),"target",5,110,200));assertEquals(Engine.State.HOME,e.state);assertNotNull(e.observe(Semantic.inspect(fresh),200));}
     @Test public void U_screenshotFailureDoesNotSubmitAction(){var t=start();gate.failure(t,"screenshot 실패");assertArrayEquals(new long[4],e.actions);assertFalse(e.busy());assertTrue(logs.get(0).contains("임의 클릭 없음"));}
     @Test public void V_ocrFailureDoesNotSubmitAction(){var t=start();gate.failure(t,"OCR 실패");assertArrayEquals(new long[4],e.actions);assertFalse(e.busy());}
     @Test public void KQ_previousCycleAndStoppedOcrRejected(){var t=start();e.stop();assertNull(gate.merge(t,fresh,List.of(),"target",4,110,200));e.start(0,201);assertNull(gate.merge(t,fresh,List.of(),"target",4,210,220));assertEquals(0,e.completed);}

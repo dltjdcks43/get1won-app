@@ -62,7 +62,7 @@ public final class WindowOcr implements AutoCloseable {
             // A mismatch is not guessed; e.g. rotation/resize during capture requires a fresh request.
             if((long)buffer.getWidth()*buffer.getHeight()>16000000L){finish(ticket,result,null,0,"screenshot 이미지 처리 크기 제한");return;}
             if(buffer.getWidth()!=ticket.region().width() || buffer.getHeight()!=ticket.region().height()) {
-                finish(ticket,result,null,0,"screenshot 크기와 window bounds 불일치");return;
+                finish(ticket,result,null,0,"screenshot 크기와 window bounds 불일치: image="+buffer.getWidth()+"x"+buffer.getHeight()+" window="+ticket.region());return;
             }
             hardware=Bitmap.wrapHardwareBuffer(buffer,shot.getColorSpace());
             if(hardware==null)throw new IllegalStateException("buffer");
