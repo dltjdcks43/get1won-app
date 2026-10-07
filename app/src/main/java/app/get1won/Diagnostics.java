@@ -19,7 +19,7 @@ final class Diagnostics {
     }
     static String describe(Throwable error) { StringWriter out=new StringWriter();if(error!=null)error.printStackTrace(new PrintWriter(out));return latest+"\n"+out; }
     static synchronized void record(Engine e) {
-        latest="state="+e.state+"\ncycleId="+e.cycleId+"\nlastAction="+e.lastAction+"\nlastSemanticResult="+e.lastSemanticResult;
+        latest="state="+e.state+"\ncycleId="+e.cycleId+"\ncompleted="+e.completed+"\nlastSuccess="+e.lastSuccess+"\nlastAction="+e.lastAction+"\nlastSemanticResult="+e.lastSemanticResult;
         if(disk!=null && !written.equals(latest)){disk.removeCallbacks(save);disk.postDelayed(save,300);}
     }
     private static final Runnable save=()->{String current; synchronized(Diagnostics.class){current=latest;written=current;}write("last-state.txt",current);};

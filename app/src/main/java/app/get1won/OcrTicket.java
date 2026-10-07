@@ -1,11 +1,10 @@
 package app.get1won;
-
-/** Every OCR callback is bound to a session, cycle, state, window and fresh frame. */
+/** Action epoch changes only on decisions, not on unrelated content events. */
 public record OcrTicket(long id,long generation,long cycle,Engine.State state,long revision,int window,String pkg,long requested,String fingerprint,Semantic.Box region,Semantic.Box overlay) {
-    public boolean current(long generation,long cycle,Engine.State state,long revision) {
-        return this.generation==generation && this.cycle==cycle && this.state==state && this.revision==revision;
+    public boolean current(long generation,long cycle,Engine.State state,long actionEpoch) {
+        return this.generation==generation && this.cycle==cycle && this.state==state && this.revision==actionEpoch;
     }
-    public boolean matches(int window,String pkg,String fingerprint,long frameTime,long now) {
-        return this.window==window && this.pkg.equals(pkg) && this.fingerprint.equals(fingerprint) && frameTime>=requested && now>=frameTime && now-frameTime<=2500;
+    public boolean matches(int window,String pkg,String unused,long frameTime,long now) {
+        return this.window==window && this.pkg.equals(pkg) && frameTime>=requested && now>=frameTime && now-frameTime<=2500;
     }
 }

@@ -1,7 +1,6 @@
 package app.get1won;
 
 import android.accessibilityservice.*;
-import android.content.Intent;
 import android.graphics.*;
 import android.os.*;
 import android.view.*;
@@ -9,22 +8,23 @@ import android.view.accessibility.*;
 import android.widget.*;
 import java.util.*;
 
-/** Android adapter. All controller mutations run on main; OCR returns immutable data with a ticket. */
+/** Main-thread Android adapter: fresh nodes per scan, locked app/window, one ticket per action. */
 public final class AutomationService extends AccessibilityService {
     private final Handler main=new Handler(Looper.getMainLooper());
     private final Engine engine=AppState.engine;
+    private final ObservationGate observations=new ObservationGate(engine,AppState::log);
     private WindowManager wm;
     private LinearLayout panel; private TextView status; private Button start,stop;
     private WindowManager.LayoutParams panelParams;
-    private volatile boolean session,closed; private boolean analysisOnly;
-    private volatile long revision; private long lastScan,ocrSequence,lastOcrRequest,observedCycle=-1,observedGeneration=-1;
-    private String targetPackage="",diagnostic="",lastFingerprint="",ocrKey="";
-    private int targetWindow=-1;
-    private long stateSince; private Engine.State observedState;
-    private boolean timeoutRechecked;
-    private volatile OcrTicket pending;
-    private record Snapshot(Semantic.Scene scene,Map<Integer,AccessibilityNodeInfo> handles,int window,String pkg,String fingerprint) implements AutoCloseable {
-        @SuppressWarnings("deprecation") public void close() { for(AccessibilityNodeInfo n:handles.values()) n.recycle(); }
+    private boolean session,closed,analysisOnly;
+    private long lastScan,ocrSequence,lastOcrRequest;
+    private String diagnostic="";
+    private TargetWindow target;
+    private OcrTicket pending;
+    private WindowOcr ocr;
+    private final Set<String> pointsIds=new HashSet<>();
+    private record Snapshot(Semantic.Scene scene,Map<Integer,AccessibilityNodeInfo> handles,int window,String pkg,int count,boolean partial) implements AutoCloseable {
+        @SuppressWarnings("deprecation") public void close() { for(AccessibilityNodeInfo n:handles.values())n.recycle(); }
     }
     @Override protected void onServiceConnected() {
         AppState.initialize(this);AppState.accessibility=this;wm=getSystemService(WindowManager.class);makePanel();
@@ -33,133 +33,181 @@ public final class AutomationService extends AccessibilityService {
     public String analysis() { return diagnostic; }
     public void prepareAnalysis() { analysisOnly=true; }
     public void resizePanel() { main.post(this::updatePanel); }
-    public void openSession() { main.post(()->{if(closed)return;session=true;updatePanel();}); }
-    public void closeSession() { endSession();stopService(new Intent(this,CaptureService.class)); }
-    public void onCaptureStopped() { if(Looper.myLooper()==main.getLooper()) endSession();else main.post(this::endSession); }
-    private void endSession() { engine.stop();session=false;pending=null;main.removeCallbacks(scanTask);updatePanel(); }
+    public void openSession() {
+        if(closed)return;
+        if(ocr!=null && WindowOcr.preparationFailed){ocr.close();ocr=null;}
+        if(ocr==null){ocr=new WindowOcr(this);}
+        session=true;AppState.capturing=true;updatePanel();
+    }
+    public void closeSession() {
+        engine.stop();session=false;pending=null;main.removeCallbacks(scanTask);AppState.capturing=false;
+        if(ocr!=null){ocr.close();ocr=null;}updatePanel();
+    }
     private void begin() {
-        if(!CaptureService.ready || !AppState.capturing) return;
-        targetPackage="";targetWindow=-1;pending=null;ocrKey="";lastFingerprint="";revision++;
-        if(analysisOnly) { analysisOnly=false;try(Snapshot s=snapshot()) { if(s!=null) diagnostic=Semantic.inspect(s.scene).summary(); } return; }
-        engine.start(AppState.profile.repeats,SystemClock.uptimeMillis());updatePanel();schedule(0);
+        if(!session || closed)return;
+        pending=null;target=null;pointsIds.clear();
+        try(Snapshot s=snapshot()) {
+            if(s==null || s.pkg.equals(getPackageName())) { engine.pause("대상 앱 화면을 열어주세요.");updatePanel();return; }
+            if(analysisOnly){analysisOnly=false;diagnostic=Semantic.inspect(s.scene).summary();return;}
+            target=new TargetWindow(s.pkg,s.window);
+            engine.start(AppState.profile.repeats,SystemClock.uptimeMillis());observations.bind(s.pkg,s.window);
+            AppState.log("시작 target package="+s.pkg+" window="+s.window);
+        } catch(RuntimeException e){Diagnostics.error(e);engine.pause("시작 화면을 읽지 못했어요.");}
+        updatePanel();schedule(0);
     }
     @Override public void onAccessibilityEvent(AccessibilityEvent event) {
-        if(closed || !engine.active()) return;
-        if(event.getPackageName()!=null && event.getPackageName().toString().equals(getPackageName())) return;
-        int type=event.getEventType();
-        if(type==AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED || type==AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED) {
-            revision++;pending=null;schedule(Math.max(0,300-(SystemClock.uptimeMillis()-lastScan)));
-        }
+        if(closed || !engine.active())return;
+        if(event.getPackageName()!=null && event.getPackageName().toString().equals(getPackageName()))return;
+        // Events trigger observation, but do not invalidate an otherwise fresh OCR ticket.
+        schedule(Math.max(0,100-(SystemClock.uptimeMillis()-lastScan)));
     }
-    /** Called for a changed captured application frame, not for overlay animation. */
-    public void screenChanged() { main.post(()->{if(engine.active()) { revision++;pending=null;schedule(Math.max(0,300-(SystemClock.uptimeMillis()-lastScan))); }}); }
     private void schedule(long delay) {
         if(!engine.active() || closed)return;
-        // One bounded auxiliary task, cancelled on pause/stop. Events may advance it.
         main.removeCallbacks(scanTask);main.postDelayed(scanTask,delay);
     }
-    private final Runnable scanTask=()->{scan();};
-    private void syncCycle() {
-        if(observedCycle!=engine.cycleId || observedGeneration!=engine.generation) {
-            pending=null;ocrKey="";lastFingerprint="";observedCycle=engine.cycleId;observedGeneration=engine.generation;
-        }
-        if(observedState!=engine.state) { observedState=engine.state;stateSince=SystemClock.uptimeMillis();timeoutRechecked=false;pending=null;ocrKey=""; }
-    }
+    private final Runnable scanTask=this::scan;
+    private boolean guard(Snapshot s) {return observations.window(s.pkg,s.window);}
     private void scan() {
-        if(closed || !session || !engine.active()) { updatePanel();return; }
-        lastScan=SystemClock.uptimeMillis();syncCycle();
+        if(closed || !session || !engine.active()){updatePanel();return;}
+        lastScan=SystemClock.uptimeMillis();
+        if(pending!=null && !valid(pending))pending=null;
+        if(pending!=null && lastScan-pending.requested()>=8000){pending=null;engine.pause("screenshot/OCR 응답 시간 초과로 멈췄어요.");}
         try(Snapshot s=snapshot()) {
-            if(s==null) {
-                if(engine.expired(lastScan)) engine.pause("대상 앱의 화면을 확인하지 못했어요.");
-            } else {
-                if(targetPackage.isEmpty()) { targetPackage=s.pkg;targetWindow=s.window; }
-                if(!s.pkg.equals(targetPackage)) { engine.pause("다른 앱으로 전환되어 멈췄어요."); }
-                else {
-                    if(targetWindow!=s.window || !lastFingerprint.equals(s.fingerprint)) { targetWindow=s.window;lastFingerprint=s.fingerprint;revision++;pending=null; }
-                    Semantic.Found f=Semantic.inspect(s.scene);
-                    long cycle=engine.cycleId;Engine.State state=engine.state;
-                    evaluate(s,f);
-                    if(engine.active() && cycle==engine.cycleId && state==engine.state && engine.needsOcr(f,SystemClock.uptimeMillis())) requestOcr(s);
-                }
+            if(s==null) { if(engine.expired(lastScan))engine.pause("대상 window가 가려졌거나 화면을 읽지 못했어요."); }
+            else if(engine.active() && guard(s)) {
+                Semantic.Found f=Semantic.inspect(s.scene);
+                long epoch=engine.actionEpoch,cycle=engine.cycleId;Engine.State state=engine.state;
+                evaluate(s,f);
+                if(engine.active() && epoch==engine.actionEpoch && cycle==engine.cycleId && state==engine.state && engine.needsOcr(f,lastScan))requestOcr(s);
             }
-        } catch(RuntimeException error) { Diagnostics.error(error);engine.pause("화면 분석 오류로 멈췄어요."); }
+        } catch(RuntimeException e){Diagnostics.error(e);engine.pause("화면 분석 오류로 멈췄어요.");}
         Diagnostics.record(engine);updatePanel();
-        if(engine.active()) schedule(400);else pending=null;
+        if(engine.active())schedule(250);else pending=null;
     }
     private void requestOcr(Snapshot s) {
         long now=SystemClock.uptimeMillis();
-        String key=engine.generation+":"+engine.cycleId+":"+engine.state+":"+revision;
-        boolean recheck=now-stateSince>=5000 && !timeoutRechecked;
-        if(pending!=null && now-pending.requested()<4000 || now-lastOcrRequest<500) return;
-        if(key.equals(ocrKey) && !recheck) return;
-        if(recheck) timeoutRechecked=true;
-        ocrKey=key;lastOcrRequest=now;
-        pending=new OcrTicket(++ocrSequence,engine.generation,engine.cycleId,engine.state,revision,s.window,s.pkg,now,s.fingerprint,s.scene.screen(),panelBox());
-        CaptureService.request(pending);
+        if(pending!=null || now-lastOcrRequest<500 || ocr==null || ocr.busy())return;
+        if(WindowOcr.preparationFailed){engine.pause("한국어 글자 인식을 준비하지 못했어요.");return;}
+        if(!WindowOcr.ready)return;
+        OcrTicket ticket=new OcrTicket(++ocrSequence,engine.generation,engine.cycleId,engine.state,engine.actionEpoch,s.window,s.pkg,now,"",s.scene.screen(),panelBox());
+        pending=ticket;lastOcrRequest=now;
+        if(!ocr.request(ticket,new WindowOcr.Result(){
+            public void success(OcrTicket t,List<Semantic.Node> nodes,long timestamp){acceptOcr(t,nodes,timestamp);}
+            public void failure(OcrTicket t,String stage){if(valid(t)){pending=null;observations.failure(t,stage);schedule(250);}}
+        }))pending=null;
     }
     public void acceptOcr(OcrTicket ticket,List<Semantic.Node> nodes,long frameTime) {
-        main.post(()->{
-            if(!valid(ticket)) return;
-            pending=null;
-            try(Snapshot fresh=snapshot()) {
-                if(fresh==null || !ticket.matches(fresh.window,fresh.pkg,fresh.fingerprint,frameTime,SystemClock.uptimeMillis())) return;
-                Semantic.Scene merged=Semantic.mergeOcr(fresh.scene,nodes);
-                Semantic.Found found=Semantic.inspect(merged);
-                evaluate(new Snapshot(merged,fresh.handles,fresh.window,fresh.pkg,fresh.fingerprint),found);
-            } catch(RuntimeException e) { Diagnostics.error(e);engine.pause("글자 인식 결과 처리 오류로 멈췄어요."); }
-            Diagnostics.record(engine);updatePanel();
-            if(engine.active()) schedule(400);
-        });
+        if(!valid(ticket))return;
+        pending=null;
+        try(Snapshot fresh=snapshot()) {
+            if(fresh==null || !guard(fresh))return;
+            Semantic.Found found=observations.merge(ticket,fresh.scene,nodes,fresh.pkg,fresh.window,frameTime,SystemClock.uptimeMillis());
+            if(found==null)return;
+            Semantic.Scene merged=Semantic.mergeOcr(fresh.scene,nodes);
+            AppState.log("OCR 성공 nodes="+nodes.size()+" "+found.summary());
+            evaluate(new Snapshot(merged,fresh.handles,fresh.window,fresh.pkg,fresh.count,fresh.partial),found);
+        } catch(RuntimeException e){Diagnostics.error(e);engine.pause("글자 인식 결과 처리 오류로 멈췄어요.");}
+        Diagnostics.record(engine);updatePanel();if(engine.active())schedule(250);
     }
-    public boolean valid(OcrTicket t) { return !closed && session && engine.active() && t==pending && t.current(engine.generation,engine.cycleId,engine.state,revision); }
+    public boolean valid(OcrTicket t) {
+        return !closed && session && engine.active() && t==pending && t.current(engine.generation,engine.cycleId,engine.state,engine.actionEpoch);
+    }
     private void evaluate(Snapshot s,Semantic.Found f) {
-        diagnostic=f.summary();
-        if(!diagnostic.equals(engine.lastSemanticResult)) AppState.log(diagnostic);
-        long cycle=engine.cycleId;
+        diagnostic="package="+s.pkg+" window="+s.window+" nodes="+s.count+" partial="+s.partial+"\n"+f.summary();
+        if(!f.summary().equals(engine.lastSemanticResult))AppState.log(diagnostic);
         Engine.Decision decision=engine.observe(f,SystemClock.uptimeMillis());
-        if(cycle!=engine.cycleId) { syncCycle();return; }
-        if(decision==null) return;
-        boolean accepted;
-        if(decision.action()==Engine.Action.BACK_REWARD || decision.action()==Engine.Action.BACK_HISTORY) {
-            // No sleep, delayed callback or extra confirmation after a valid completion observation.
-            accepted=performGlobalAction(GLOBAL_ACTION_BACK);
-        } else {
-            Semantic.Node target=decision.action()==Engine.Action.POINTS && decision.attempt()==1?Semantic.clickParent(s.scene,decision.target()):decision.target();
-            if(movePanelAway(target.box())) { pending=null;revision++;schedule(400);return; }
-            AccessibilityNodeInfo handle=s.handles.get(target.id());
-            if(decision.attempt()==1 && target.clickable() && handle!=null) accepted=handle.performAction(AccessibilityNodeInfo.ACTION_CLICK);
-            else {
-                Semantic.Box b=target.box();float x=decision.action()==Engine.Action.AD && decision.attempt()==3?b.left()+b.width()*.65f:b.cx();
-                Path path=new Path();path.moveTo(x,b.cy());
-                accepted=dispatchGesture(new GestureDescription.Builder().addStroke(new GestureDescription.StrokeDescription(path,0,80)).build(),null,null);
-            }
+        if(decision==null)return;
+        // Recheck the window immediately before dispatch. Handles are scoped to this snapshot only.
+        try(WindowIdentity live=window()) {
+            if(live==null){engine.defer(decision);return;}
+            if(target==null || !target.matches(live.pkg,live.id)){engine.pause("동작 직전 대상 window가 바뀌었어요.");return;}
         }
-        engine.submitted(decision,accepted,SystemClock.uptimeMillis());pending=null;ocrKey="";syncCycle();
+        pending=null;
+        if(decision.action()==Engine.Action.BACK_REWARD || decision.action()==Engine.Action.BACK_HISTORY) {
+            boolean accepted=performGlobalAction(GLOBAL_ACTION_BACK);
+            AppState.log("BACK "+(accepted?"요청 성공 / 실제 복귀 대기":"요청 실패"));
+            engine.submitted(decision,accepted,SystemClock.uptimeMillis());return;
+        }
+        Semantic.Node node=Semantic.clickParent(s.scene,decision.target());
+        if(node==null || node.box().width()==0 || node.box().height()==0 || !s.scene.screen().contains(node.box())) {
+            engine.pause("현재 클릭 bounds를 확인하지 못했어요.");return;
+        }
+        if(movePanelAway(node.box())){engine.defer(decision);return;}
+        AccessibilityNodeInfo handle=s.handles.get(node.id());
+        if(decision.attempt()==1 && node.clickable() && handle!=null) {
+            boolean accepted=handle.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+            AppState.log("ACTION_CLICK "+(accepted?"accepted":"rejected")+" target="+decision.action()+" source="+node.source()+" bounds="+node.box());
+            if(accepted){engine.submitted(decision,true,SystemClock.uptimeMillis());return;}
+            // Do not reuse this handle/bounds for fallback. Next observation resolves the target again.
+            engine.submitted(decision,false,SystemClock.uptimeMillis());return;
+        }
+        Semantic.Box b=node.box();Path path=new Path();path.moveTo(b.cx(),b.cy());
+        boolean accepted=dispatchGesture(new GestureDescription.Builder().addStroke(new GestureDescription.StrokeDescription(path,0,80)).build(),new GestureResultCallback(){
+            @Override public void onCompleted(GestureDescription g){result(true);}
+            @Override public void onCancelled(GestureDescription g){result(false);}
+            private void result(boolean completed){
+                if(!engine.current(decision) || closed || !session)return;
+                try(WindowIdentity live=window()) {
+                    if(live==null || target==null || !target.matches(live.pkg,live.id)){engine.pause("gesture 응답 시 대상 window를 확인하지 못했어요.");updatePanel();return;}
+                }
+                engine.gestureResult(decision,completed,SystemClock.uptimeMillis());schedule(0);
+            }
+        },main);
+        AppState.log("gesture target="+decision.action()+" source="+node.source()+" bounds="+b);
+        engine.gestureSubmitted(decision,accepted,SystemClock.uptimeMillis());
+    }
+    private record WindowIdentity(int id,String pkg,Semantic.Box bounds,AccessibilityNodeInfo root) implements AutoCloseable {
+        @SuppressWarnings("deprecation") public void close(){root.recycle();}
+    }
+    @SuppressWarnings("deprecation") private WindowIdentity window() {
+        List<AccessibilityWindowInfo> windows=getWindows();AccessibilityWindowInfo chosen=null;
+        try {
+            for(AccessibilityWindowInfo w:windows) {
+                if(w.getType()==AccessibilityWindowInfo.TYPE_APPLICATION && (chosen==null || w.getLayer()>chosen.getLayer()))chosen=w;
+            }
+            if(chosen==null)return null;
+            for(AccessibilityWindowInfo w:windows) {
+                if(w.getType()!=AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY && w.getType()!=AccessibilityWindowInfo.TYPE_APPLICATION && w.isActive() && w.getLayer()>chosen.getLayer())return null;
+            }
+            AccessibilityNodeInfo root=chosen.getRoot();if(root==null)return null;
+            Rect bounds=new Rect();chosen.getBoundsInScreen(bounds);
+            return new WindowIdentity(chosen.getId(),String.valueOf(root.getPackageName()),box(bounds),root);
+        } finally {for(AccessibilityWindowInfo w:windows)w.recycle();}
     }
     @SuppressWarnings("deprecation") private Snapshot snapshot() {
-        AccessibilityWindowInfo chosen=null;
-        for(AccessibilityWindowInfo w:getWindows()) {
-            if(w.getType()==AccessibilityWindowInfo.TYPE_APPLICATION && (w.isActive() || w.isFocused()) && (chosen==null || w.getLayer()>chosen.getLayer())) chosen=w;
+        try(WindowIdentity w=window()) {
+            if(w==null)return null;
+            List<Semantic.Node> nodes=new ArrayList<>();Map<Integer,AccessibilityNodeInfo> handles=new HashMap<>();
+            try {
+                // Platform text lookup prioritizes points outside the bounded general traversal.
+                int id=collectMatches(w.root.findAccessibilityNodeInfosByText("포인트"),100000,100100,w.bounds,nodes,handles);
+                for(String resourceId:new ArrayList<>(pointsIds))
+                    id=collectMatches(w.root.findAccessibilityNodeInfosByViewId(resourceId),id,100200,w.bounds,nodes,handles);
+                TreeWalk.Result result=TreeWalk.collect(AccessibilityNodeInfo.obtain(w.root),new TreeWalk.Access<AccessibilityNodeInfo>(){
+                    public int children(AccessibilityNodeInfo n){return n.getChildCount();}
+                    public AccessibilityNodeInfo child(AccessibilityNodeInfo n,int i){return n.getChild(i);}
+                    public void visit(AccessibilityNodeInfo n,int id,int parent){addNode(n,id,parent,w.bounds,nodes,handles);}
+                    public void release(AccessibilityNodeInfo n){n.recycle();}
+                },2000,SystemClock::uptimeMillis,80);
+                return new Snapshot(new Semantic.Scene(nodes,w.bounds),handles,w.id,w.pkg,result.visited(),result.partial());
+            } catch(RuntimeException e){for(AccessibilityNodeInfo n:handles.values())n.recycle();throw e;}
         }
-        if(chosen==null)return null;
-        AccessibilityNodeInfo root=chosen.getRoot();if(root==null)return null;
-        String pkg=String.valueOf(root.getPackageName());
-        if(pkg.equals(getPackageName())) { root.recycle();return null; }
-        Rect bounds=new Rect();chosen.getBoundsInScreen(bounds);
-        List<Semantic.Node> nodes=new ArrayList<>();Map<Integer,AccessibilityNodeInfo> handles=new HashMap<>();
-        ArrayDeque<AccessibilityNodeInfo> queue=new ArrayDeque<>();queue.add(root);int count=0;
-        while(!queue.isEmpty()) {
-            AccessibilityNodeInfo n=queue.removeFirst();
-            if(++count>600) { n.recycle();while(!queue.isEmpty())queue.removeFirst().recycle();for(AccessibilityNodeInfo h:handles.values())h.recycle();return null; }
-            if(!n.isVisibleToUser()) { n.recycle();continue; }
-            Rect b=new Rect();n.getBoundsInScreen(b);int id=nodes.size();
-            String text=n.getText()==null?"":n.getText().toString();
-            if(text.isBlank() && n.getContentDescription()!=null) text=n.getContentDescription().toString();
-            nodes.add(new Semantic.Node(id,-1,text,box(b),n.isClickable(),n.isEnabled(),"Accessibility"));handles.put(id,n);
-            for(int j=0;j<n.getChildCount();j++) { AccessibilityNodeInfo child=n.getChild(j);if(child!=null)queue.add(child); }
-        }
-        Semantic.Scene scene=new Semantic.Scene(nodes,box(bounds));
-        return new Snapshot(scene,handles,chosen.getId(),pkg,Integer.toHexString(nodes.hashCode()));
+    }
+    @SuppressWarnings("deprecation") private int collectMatches(List<AccessibilityNodeInfo> matches,int id,int limit,Semantic.Box bounds,List<Semantic.Node> nodes,Map<Integer,AccessibilityNodeInfo> handles) {
+        try {for(AccessibilityNodeInfo n:matches)if(id<limit)addNode(n,id++,-1,bounds,nodes,handles);return id;}
+        finally {for(AccessibilityNodeInfo n:matches)n.recycle();}
+    }
+    @SuppressWarnings("deprecation") private void addNode(AccessibilityNodeInfo n,int id,int parent,Semantic.Box screen,List<Semantic.Node> nodes,Map<Integer,AccessibilityNodeInfo> handles) {
+        if(!n.isVisibleToUser() || n.isPassword())return;
+        Rect rect=new Rect();n.getBoundsInScreen(rect);Semantic.Box bounds=box(rect);
+        if(bounds.width()==0 || bounds.height()==0 || !bounds.overlaps(screen))return;
+        String text=n.getText()==null?"":n.getText().toString(),desc=n.getContentDescription()==null?"":n.getContentDescription().toString();
+        String resourceId=n.getViewIdResourceName()==null?"":n.getViewIdResourceName();
+        if(Semantic.normalize(text).equals("내포인트") || Semantic.normalize(desc).equals("내포인트")) {
+            if(!resourceId.isBlank() && pointsIds.size()<8)pointsIds.add(resourceId);
+        } // A known ID prioritizes lookup, but never invents a missing semantic label.
+        nodes.add(new Semantic.Node(id,parent,text,bounds,n.isClickable(),n.isEnabled(),"Accessibility",desc,resourceId));
+        handles.put(id,AccessibilityNodeInfo.obtain(n));
     }
     static Semantic.Box box(Rect b) { return new Semantic.Box(b.left,b.top,b.right,b.bottom); }
     public Semantic.Box panelBox() {
@@ -194,6 +242,6 @@ public final class AutomationService extends AccessibilityService {
         int width=dp(running?108:150+AppState.profile.panelSize*12);
         if(panelParams.width!=width) { panelParams.width=width;wm.updateViewLayout(panel,panelParams); }
     }
-    @Override public void onInterrupt() { engine.pause("접근성이 중단되어 멈췄어요.");pending=null;updatePanel(); }
-    @Override public void onDestroy() { closed=true;engine.stop();pending=null;main.removeCallbacksAndMessages(null);if(panel!=null && panel.isAttachedToWindow())wm.removeView(panel);AppState.accessibility=null;super.onDestroy(); }
+    @Override public void onInterrupt(){engine.pause("접근성이 중단되어 멈췄어요.");pending=null;updatePanel();}
+    @Override public void onDestroy(){closeSession();closed=true;main.removeCallbacksAndMessages(null);if(panel!=null && panel.isAttachedToWindow())wm.removeView(panel);AppState.accessibility=null;super.onDestroy();}
 }

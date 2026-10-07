@@ -3,6 +3,7 @@
     android:accessibilityFeedbackType="feedbackGeneric"
     android:notificationTimeout="0"
     android:canPerformGestures="true"
+    android:canTakeScreenshot="true"
     android:canRetrieveWindowContent="true"
     android:accessibilityFlags="flagReportViewIds|flagRetrieveInteractiveWindows"
     android:isAccessibilityTool="false"

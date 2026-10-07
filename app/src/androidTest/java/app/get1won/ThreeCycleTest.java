@@ -33,16 +33,10 @@ public class ThreeCycleTest {
         try {
             device.executeShellCommand("settings put secure enabled_accessibility_services "+added);
             device.executeShellCommand("settings put secure accessibility_enabled 1");
-            device.executeShellCommand("pm grant app.get1won android.permission.POST_NOTIFICATIONS");
             until(()->AppState.accessibility!=null,15000,"Accessibility connection");
             MainActivity main=(MainActivity)instrumentation.startActivitySync(new Intent(instrumentation.getTargetContext(),MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
             instrumentation.runOnMainSync(main::requestCapture);
-            long end=SystemClock.uptimeMillis()+15000;
-            while(!AppState.capturing && SystemClock.uptimeMillis()<end) {
-                UiObject2 allow=device.findObject(By.pkg("com.android.systemui").res("android:id/button1"));
-                if(allow!=null)allow.click();SystemClock.sleep(200);
-            }
-            until(()->AppState.capturing && CaptureService.ready,30000,"Local Korean OCR ready");
+            until(()->AppState.capturing && WindowOcr.ready,30000,"Local Korean OCR ready");
             instrumentation.runOnMainSync(()->AppState.profile.repeats=3);
             device.executeShellCommand("am force-stop app.get1won.fixture");
             device.executeShellCommand("am start -n app.get1won.fixture/.FixtureActivity");
@@ -51,7 +45,7 @@ public class ThreeCycleTest {
             assertArrayEquals(new long[]{3,3,3,3},AppState.engine.actions);
             String audit=device.executeShellCommand("run-as app.get1won.fixture cat files/audit.txt").trim();
             assertEquals("cycles=3 ad=3 points=3 rewardBack=3 historyBack=3 earlyBack=0 wrongClick=0",audit);
-            android.util.Log.i("V2ThreeCycle",audit);
+            android.util.Log.i("V3ThreeCycle",audit);
             var version=AppVersion.read(instrumentation.getTargetContext());
             assertEquals(BuildConfig.VERSION_NAME,version.name());assertEquals(BuildConfig.VERSION_CODE,version.code());
             assertEquals(BuildConfig.GIT_SHA,version.build());assertTrue(version.footer().contains(version.name()));
@@ -62,16 +56,15 @@ public class ThreeCycleTest {
             long[] beforeStop=AppState.engine.actions.clone();
             String auditBeforeStop=device.executeShellCommand("run-as app.get1won.fixture cat files/audit.txt").trim();
             UiObject2 stop=device.wait(Until.findObject(By.pkg("app.get1won").text("중지")),5000);assertNotNull(stop);stop.click();
-            until(()->!AppState.engine.active() && !AppState.accessibility.sessionActive() && !AppState.capturing && !CaptureService.ready,5000,"Whole session stopped");
+            until(()->!AppState.engine.active() && !AppState.accessibility.sessionActive() && !AppState.capturing && !WindowOcr.ready,5000,"Whole session stopped");
             until(()->instrumentation.getTargetContext().getSystemService(android.app.NotificationManager.class).getActiveNotifications().length==0,5000,"Capture notification removed");
             assertNull(device.findObject(By.pkg("app.get1won").text("중지")));
             assertNull(device.findObject(By.pkg("app.get1won").text("시작")));
             until(()->!projectionRunning(),5000,"MediaProjection actually stopped");
-            assertFalse(instrumentation.getTargetContext().getSystemService(android.app.ActivityManager.class).getRunningServices(100).stream().anyMatch(service->service.service.getClassName().equals(CaptureService.class.getName())));
             SystemClock.sleep(1500);
             assertArrayEquals(beforeStop,AppState.engine.actions);
             assertEquals(auditBeforeStop,device.executeShellCommand("run-as app.get1won.fixture cat files/audit.txt").trim());
-            android.util.Log.i("V2Stop","PASS engine/session/overlay/capture/projection/notification stopped; subsequent actions=0");
+            android.util.Log.i("V3Stop","PASS engine/session/overlay/capture/projection/notification stopped; subsequent actions=0");
         } finally {
             instrumentation.runOnMainSync(()->{if(AppState.accessibility!=null)AppState.accessibility.closeSession();});
             if(previous.equals("null"))device.executeShellCommand("settings delete secure enabled_accessibility_services");

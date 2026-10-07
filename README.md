@@ -1,38 +1,50 @@
-# 1원 받기 V2
+# 1원 받기 3.0-beta1
 
-V1 전체 작업은 `archive/v1-before-v2` 브랜치에 보존했습니다. V2는 기존 실행 구조를 재사용하지 않고 관측/의미 분석/전환 확인으로 나눴습니다.
-
-## 구조
-
-- `Semantic`: 한 application window의 immutable 관측. 공백 정규화, 의미 토큰, 가까운 분할 문장 결합, 겹치는 Accessibility/OCR 관측 병합. 멀리 떨어진 중복은 모호성 유지.
-- `Engine`: HOME → 광고 진입 확인 → 완료 대기 → HOME → 내역 → HOME. 플랫폼의 요청 수락과 화면 전환을 분리합니다. Android node/광고 위치를 저장하지 않습니다.
-- `AutomationService`: foreground TYPE_APPLICATION만 읽고 overlay/자기 앱은 제외. Accessibility 이벤트 + 400ms 보조 확인, 이벤트 폭주 시 분석 간격 최소 300ms. 트리 최대 600개. 관측 후 즉시 동작, Android node 참조는 해당 관측에서만 유효.
-- `CaptureService`: 필요한 의미 정보가 없을 때만 번들 한국어 ML Kit. 동일 정지 화면 1회와 상태당 5초 후 재확인 1회. 화면 변경은 새 요청 가능. 한 번에 OCR 1개, 요청 간격 최소 500ms. MediaProjection 화면을 파일/서버에 저장하지 않습니다.
-- `OcrTicket`: generation/cycle/state/revision/window/package/새 root fingerprint/프레임 생성 시각을 검증해 오래된 콜백을 폐기합니다.
-- `Diagnostics`: 마지막 state/cycleId/action/semantic 결과와 Java stack, Android의 과거 process exit/ANR trace를 앱 내부에 보관합니다. 고급 설정의 마지막 오류 보기에서 읽습니다.
-
-광고 anchor는 `구경` + `1원` + `받`이며 가까운 세로 분할 문장을 합칩니다. 제목/상품명/금액은 타겟 선택 기준이 아닙니다. anchor 아래 가까운 가로형 콘텐츠를 찾고 clickable row를 우선합니다. 접근성이 부족하면 OCR 제목 bounds를 사용합니다. 고정 화면 좌표나 테스트 ID는 사용하지 않습니다.
-
-클릭은 ACTION_CLICK 우선, 그 외 현재 bounds의 80ms gesture입니다. HOME이 1초 후 그대로면 새 관측으로만 최대 3회 시도합니다. 3초+구경이 있는 동안 BACK 금지. 1원+받았 완료를 유효하게 관측하면 추가 대기 없이 BACK합니다. 30초 timeout은 PAUSED이며 BACK 조건이 아닙니다. 다음 cycle은 이전 관측을 버린 뒤 새 스캔에서 시작합니다.
-
-실행 전 일반 조작창, 실행 중 가장자리의 작은 실행 중/중지 창을 사용합니다. target과 겹치면 이동하고 다시 관측합니다. OCR마다 hide/show하지 않습니다. 서비스 종료는 서로 stop을 재호출하지 않습니다.
+Android 14/API 34 이상. `v3-universal` 실험 브랜치이며 main/v2.2에 병합하지 않습니다. versionCode 9. 앱 이름과 제작자 표시, 반복 설정, 조작창 디자인은 유지합니다.
 
 ## 사용
 
-접근성 설정 → 사용 시작/화면 확인 허용 → 대상 앱을 직접 열기 → 조작창 시작. 중지는 자동화를 멈춥니다. 화면 확인 종료는 알림 또는 고급 설정에서 가능합니다. 시작한 앱을 벗어나면 일시정지합니다.
+접근성을 켠 뒤 **사용 시작** → 대상 앱을 직접 열기 → 조작창 **시작**. 시작 시 foreground application package/window를 고정합니다. 화면 공유 동의는 필요하지 않습니다. 반복은 1/10/100/계속(0)이며 중지는 session과 이후 callback을 무효화합니다.
+
+설정 → 고급 설정 → 최근 동작 로그에서 state, cycle/completed, target package/window, node 수/부분 탐색, points/anchor/ad/waiting/completion/history, 인식 source/bounds, screenshot/OCR, 클릭 accepted, gesture submitted/completed/cancelled, BACK 요청과 실제 화면 확인, 재시도/중지 원인/마지막 성공 단계를 확인할 수 있습니다. APK 실제 버전과 코드, debug Git SHA도 표시합니다.
+
+## 구조와 실제 확인
+
+- `AutomationService`: Android 접근성 adapter. 화면 관찰과 Engine 변경, 입력 dispatch/callback은 main thread에서 직렬 실행합니다.
+- `Semantic`: text 및 contentDescription, 실제 hierarchy/clickable parent와 현재 bounds를 사용합니다. `내 포인트`는 공백/줄바꿈을 제거한 정확한 의미 label로 찾고 출금/확인/알림 메뉴는 제외합니다. resourceId는 같은 session에서 정확한 label과 함께 관찰한 ID만 우선 조회에 사용합니다. ID만으로 사라진 label을 만들어내지 않고 text/description 또는 OCR의 현재 의미를 확인합니다.
+- `TreeWalk`: points 우선 platform text query 후 일반 BFS를 최대 2,000 node/80ms로 제한합니다. 제한까지 얻은 결과는 유지하고 비가시 부모 아래 자식도 탐색합니다. 이 한계 밖에 있는 target은 OCR fallback으로 찾습니다. 한 번의 OS binder 호출 소요시간까지 앱이 보장할 수는 없습니다.
+- `Engine`: action 예약 ID로 중복 dispatch를 막습니다. Android 요청 수락은 성공 카운트가 아닙니다. gesture callback도 입력 완료 여부만 나타내며 **기대한 다음 화면**이 확인되어야 성공입니다.
+- `ObservationGate`/`OcrTicket`: generation/cycle/state/action epoch/package/window/현재 bounds와 screenshot 나이를 확인합니다. 무관한 접근성 이벤트나 전체 트리 fingerprint 변화는 OCR을 무효화하지 않습니다.
+- `WindowOcr`: 필요한 의미 정보가 없을 때만 `takeScreenshotOfWindow` + 번들 한국어 ML Kit를 사용합니다. 변환/OCR은 별도 worker, 한 이미지씩 처리합니다. **MediaProjection, VirtualDisplay, ImageReader, surface detach/attach 및 timestamp timebase 변환은 제거**했습니다.
+
+```
+HOME (points + anchor + 광고)
+ → AD_ENTRY (실제 광고 진입 기다림)
+ → REWARD (waiting은 BACK 거부, 실제 완료만 BACK)
+ → WAIT_FOR_POINTS (광고 anchor와 무관하게 points 탐색)
+ → POINTS_ENTRY (요청 성공이 아닌 실제 내역 기다림)
+ → HISTORY (복수 의미 특징 + 서로 다른 transaction 2행)
+ → HOME_AFTER_HISTORY (points 홈 복귀 확인)
+ → completed/cycle 증가, 시도 초기화 → HOME
+```
+
+적립 후 points만 먼저 보이면 바로 points 단계로 진행합니다. 내역 복귀 후에도 points만으로 cycle을 마치고 새 HOME에서 광고의 늦은 렌더링을 기다립니다. 광고 제목/휴대전화 절대 좌표는 하드코딩하지 않습니다. 기존 anchor 아래 광고 탐색과 다른 1원 이벤트 제외 규칙을 유지합니다.
+
+첫 시도는 clickable node `ACTION_CLICK`, 거부되거나 화면이 바뀌지 않으면 **새 관찰에서** gesture fallback을 사용합니다. 클릭은 최대 3회, 각 단계는 최대 30초입니다. 재시도는 1초 응답 관찰 기회를 둡니다. 실제 다음 화면은 즉시 받아들이며 sleep으로 진행을 강제하지 않습니다. 보조 관찰 250ms, OCR 요청 간격 최소 500ms는 관찰 부하 제한이지 성공 조건이 아닙니다. gesture 응답은 3초, screenshot/OCR 응답은 8초까지 기다린 후 중지합니다. 타임아웃은 BACK/다음 cycle을 발생시키지 않습니다.
+
+## 범위 및 제한
+
+- INTERNET 권한 없음. 이미지/원문 OCR/포인트 잔액을 저장하거나 전송하지 않습니다. 진단에는 상태·bounds·앱/window 식별정보만 포함하며 최근 상태/오류는 앱 내부에 보관합니다.
+- 공식 screenshot API는 접근성 overlay 아래 target window를 캡처합니다. 직접 gesture는 조작창과 겹치면 창을 옮기고 새 화면에서 다시 target을 구합니다.
+- screenshot 크기가 현재 window bounds와 다르거나 캡처 중 크기가 달라지면 좌표를 추측하지 않고 폐기합니다. 특수 surface/insets, magnification, 제조사 차이는 실기기 확인이 필요합니다.
+- 다른 application/window는 pause합니다. 같은 앱이어도 새 window ID를 만드는 화면은 자동 진행하지 않습니다. 시스템 활성 overlay는 관찰을 보류하며 자체 accessibility overlay는 target 선택에서 제외합니다.
+- 보안 window, 접근성 정보를 숨기는 앱, OCR 오인식/실패, 두 개의 실제 동명 target, 빈 내역/한 행뿐인 내역은 안전하게 중지될 수 있습니다. 모든 Android 앱/제조사에서 성공을 보장하지 않습니다.
+- 실기기 ADB, connectedAndroidTest 및 실제 3-cycle 검증은 이번 beta에서 **실시하지 않았습니다**. unit/state/semantic 테스트는 OS 입력·렌더링 자체의 검증을 대신하지 않습니다.
 
 ## 검증
 
-```sh
-./gradlew testDebugUnitTest lintDebug assembleDebug
-```
+`./gradlew testDebugUnitTest lintDebug assembleDebug`
 
-별도 `fixture` 앱은 자연스러운 TextView/Canvas/클릭 행만 노출합니다. 광고 제목·이미지·금액·문장을 매 cycle 변경하며, 2번째는 분할 anchor와 Canvas 제목으로 OCR fallback을 요구합니다. 자동화 APK에는 fixture 코드가 포함되지 않습니다.
+`EngineTest`, `SemanticTest`, `OcrTicketTest`의 기존 회귀와 `UniversalTest`, `TreeWalkTest`, `ObservationGateTest`의 A–Z 모델 검증을 수행합니다. 구버전의 “points만 있으면 클릭 금지” 테스트는 V3 요구에 맞게 반대로 검증하며 삭제하지 않았습니다. `ThreeCycleTest`는 window 캡처 흐름에 맞게 갱신하되 이번에는 실행하지 않습니다.
 
-기기가 연결되면 다음 명령은 딱 3cycle의 실제 Android UI 흐름을 검증합니다. 테스트 fixture의 내부 audit 파일은 테스트 assertion에서만 읽으며 자동화 엔진은 접근하지 않습니다.
-
-```sh
-./gradlew :fixture:installDebug :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=app.get1won.ThreeCycleTest
-```
-
-API matrix와 50/100회 테스트는 제거했습니다. `.github/workflows/three-cycles.yml`은 수동 실행 전용입니다. JVM의 3cycle 상태 전환 테스트는 실제 폰/gesture/OCR 검증을 대체하지 않습니다. 실기기 연결이 없으면 3cycle 및 crash/ANR 0회는 미검증입니다.
+조사 출처·라이선스·채택/배제 근거는 [V3 연구 기록](docs/V3-RESEARCH.md), 코드 검토는 [리뷰 기록](docs/V3-REVIEW.md)을 참조하세요. CI는 unit/lint/build만 실행하며 debug APK artifact 이름은 `get1won-v3-<commit8>-debug`입니다. 로컬 APK와 CI APK는 debug 서명 키가 다를 수 있습니다.

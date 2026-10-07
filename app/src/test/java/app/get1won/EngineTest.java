@@ -23,9 +23,9 @@ public class EngineTest {
         assertNull(engine.observe(home(),3001));assertEquals(Engine.State.PAUSED,engine.state);assertEquals(0,engine.actions[0]);
     }
     @Test public void noRetryWithoutFreshHome() {enter();assertNull(engine.observe(text("알 수 없는 화면"),2000));}
-    @Test public void freshHomeRequiredBeforePoints() {
+    @Test public void pointsAloneAfterRewardIsSufficientV3() {
         enter();engine.submitted(engine.observe(text("1원 받았어요"),100),true,100);
-        assertNull(engine.observe(text("내 포인트"),200));assertEquals(Engine.Action.POINTS,engine.observe(home(),300).action());
+        assertEquals(Engine.Action.POINTS,engine.observe(text("내 포인트"),200).action());assertNull(engine.observe(home(),300));
     }
     @Test public void threeModeledCyclesDiscardReturnObservation() {
         engine.start(3,0);long now=1;
@@ -65,16 +65,15 @@ public class EngineTest {
         requestPoints(true);
         var fresh=Semantic.inspect(SemanticTest.home("한번 더 구경하고 1원 받아요","바뀐 광고"));
         var second=engine.observe(fresh,1200);assertEquals(2,second.attempt());assertSame(fresh.points(),second.target());engine.submitted(second,false,1200);
-        assertNull(engine.observe(text("내 포인트"),2200));
-        var third=engine.observe(home(),2200);assertEquals(3,third.attempt());engine.submitted(third,true,2200);
+        var third=engine.observe(text("내 포인트"),2200);assertEquals(3,third.attempt());engine.submitted(third,true,2200);
         assertNull(engine.observe(home(),3200));assertEquals(Engine.State.PAUSED,engine.state);
         assertEquals("내 포인트를 열지 못했어요.",engine.reason);assertEquals(0,engine.actions[2]);
     }
     @Test public void rejectedPointsSubmissionAlsoHasBoundedRetry() {
         requestPoints(false);assertEquals(Engine.State.POINTS_ENTRY,engine.state);assertEquals(2,engine.observe(home(),1200).attempt());
     }
-    @Test public void pointsOcrRefreshIsRequestedAtRetryTime() {
-        requestPoints(true);assertFalse(engine.needsOcr(text("내 포인트"),1199));assertTrue(engine.needsOcr(text("내 포인트"),1200));
+    @Test public void pointsAccessibilityTargetDoesNotRequireOcrAtRetryTime() {
+        requestPoints(true);assertFalse(engine.needsOcr(text("내 포인트"),1199));assertFalse(engine.needsOcr(text("내 포인트"),1200));assertTrue(engine.needsOcr(text("알 수 없는 화면"),1200));
     }
     @Test public void pointsTimeoutNeverBacksOrCountsSuccess() {
         requestPoints(true);assertNull(engine.observe(text("알 수 없는 화면"),30200));assertEquals(Engine.State.PAUSED,engine.state);assertEquals(0,engine.actions[2]);
