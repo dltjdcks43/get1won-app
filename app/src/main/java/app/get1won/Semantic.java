@@ -30,7 +30,12 @@ public final class Semantic {
         long intersection=(long)Math.max(0,Math.min(a.right,b.right)-Math.max(a.left,b.left))*Math.max(0,Math.min(a.bottom,b.bottom)-Math.max(a.top,b.top));
         long union=(long)a.width()*a.height()+(long)b.width()*b.height()-intersection;
         int h=Math.min(a.height(),b.height());
-        return union>0 && (intersection/(double)union>=.5 || h>0 && Math.hypot(a.cx()-b.cx(),a.cy()-b.cy())<=h && Math.abs(a.cy()-b.cy())<=h*.5 && Math.min(a.width(),b.width())>=Math.max(a.width(),b.width())*.5);
+        // Accessibility TextView bounds can cover a whole row while OCR encloses ink only.
+        int vertical=Math.max(0,Math.min(a.bottom,b.bottom)-Math.max(a.top,b.top));
+        int tolerance=Math.max(1,h/4);
+        boolean rowContains=(a.left<=b.left+tolerance && a.right>=b.right-tolerance || b.left<=a.left+tolerance && b.right>=a.right-tolerance)
+            && vertical>=h*.6 && Math.max(a.height(),b.height())<=h*2.5;
+        return union>0 && (rowContains || intersection/(double)union>=.5 || h>0 && Math.hypot(a.cx()-b.cx(),a.cy()-b.cy())<=h && Math.abs(a.cy()-b.cy())<=h*.5 && Math.min(a.width(),b.width())>=Math.max(a.width(),b.width())*.5);
     }
     /** Pairwise agreement prevents a large container from bridging distant duplicate labels. */
     static Node unique(List<Node> nodes, Predicate<String> matcher) {

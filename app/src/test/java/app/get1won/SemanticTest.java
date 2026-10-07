@@ -54,5 +54,13 @@ public class SemanticTest {
     }
     @Test public void duplicatedHistoryRowIsNotTwoRows() {assertFalse(Semantic.inspect(scene(access("전체",200,260),access("방문 적립 +1원",400,460),node("방문 적립 +1원",43,403,701,464,"OCR",false))).history());}
     @Test public void waitingAndCompletionUseTokens() {var f=Semantic.inspect(scene(access("3초 동안 혜택을 구경해주세요",400,450),access("축하해요! 1원 받았어요",800,850)));assertNotNull(f.waiting());assertNotNull(f.complete());}
+    @Test public void fullWidthAccessibilityRowsMergeWithTightOcrText() {
+        var fresh=scene(node("내 포인트",24,100,336,132,"Accessibility",true),node("여기서 구경하면",24,300,336,332,"Accessibility",false),node("1원 받아요",24,332,336,364,"Accessibility",false));
+        var merged=Semantic.mergeOcr(new Semantic.Scene(fresh.nodes(),new Semantic.Box(0,0,360,800)),List.of(node("내 포인트",25,106,110,130,"OCR",false),node("여기서 구경하면",25,306,175,330,"OCR",false),node("1원 받아요",25,338,125,362,"OCR",false),node("새로운 생활 안내",65,395,270,420,"OCR",false)));
+        var found=Semantic.inspect(merged);assertTrue(found.home());assertNotNull(found.ad());assertEquals("Accessibility",found.points().source());
+    }
+    @Test public void wideRowDoesNotHideTwoActualLabels() {
+        assertNull(Semantic.inspect(scene(node("내 포인트",0,200,1000,260,"Accessibility",false),node("내 포인트",20,205,180,255,"OCR",false),node("내 포인트",800,205,980,255,"OCR",false))).points());
+    }
     @Test public void splitCompletionRecognized() {assertNotNull(Semantic.inspect(scene(access("1원",400,450),access("받았어요",460,510))).complete());}
 }
