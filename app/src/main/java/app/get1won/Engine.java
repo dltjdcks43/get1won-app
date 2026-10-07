@@ -60,7 +60,10 @@ public final class Engine {
             }
             case HISTORY -> { if(!f.home() && f.history()) return new Decision(Action.BACK_HISTORY,null,0); }
             case HOME_AFTER_HISTORY -> {
-                if(f.home()) {
+                // After returning from the known points-history screen, "내 포인트" alone
+                // is sufficient evidence that the home surface is back. The reward anchor/card
+                // may render a moment later; HOME will wait for that fresh observation.
+                if(f.home() || f.points()!=null) {
                     completed++;cycleId++;attempts=0;pointsAttempts=0;
                     if(limit>0 && completed>=limit) { stop();reason="완료했어요."; }
                     else move(State.HOME,now);
