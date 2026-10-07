@@ -29,7 +29,26 @@ public final class Semantic {
     private static String describe(Node n) { return n==null?"not found":"found source="+n.source+" bounds="+n.box; }
     // Match the v2.2 adapter: use description only when the text is empty.
     static String label(Node n) { return n.text.isBlank()?n.description:n.text; }
-    static boolean points(String s) { return s.equals("내포인트") || s.matches("내포인트[0-9,]+(?:[Pp]|원|포인트)?[›>]?$"); }
+    static boolean points(String s) { return s.equals("내포인트") || s.matches("내포인트[0-9,]+(?:[Pp]|원|포인트)?(?:출금)?[›>]?"); }
+    private static boolean pointsContext(Node n,Map<Integer,Node> byId) {
+        Node current=n;Set<Integer> seen=new HashSet<>();
+        for(int depth=0;current!=null && depth<32 && seen.add(current.id);depth++,current=byId.get(current.parent)) {
+            // Inspect only labels describing this points region, not arbitrary surrounding page copy.
+            for(String raw:List.of(current.text,current.description)) {
+                String s=normalize(raw);
+                if((current==n || current.box.height()<=n.box.height()*4) && s.contains("내포인트") && !points(s))return false;
+            }
+        }
+        return true;
+    }
+    private record PointIdentity(Box box,String text,String description) {}
+    private static PointIdentity pointIdentity(Node n) { return new PointIdentity(n.box,n.text,n.description); }
+    private static List<Node> pointsNodes(List<Node> nodes) {
+        Map<Integer,Node> byId=new HashMap<>();for(Node n:nodes)byId.put(n.id,n);
+        Set<PointIdentity> rejected=new HashSet<>();
+        for(Node n:nodes)if((points(normalize(n.text)) || points(normalize(n.description))) && !pointsContext(n,byId))rejected.add(pointIdentity(n));
+        return nodes.stream().filter(n->!rejected.contains(pointIdentity(n))).toList();
+    }
     static boolean anchor(String s) { return s.contains("구경") && s.contains("1원") && s.contains("받"); }
     static boolean samePosition(Box a, Box b) {
         long intersection=(long)Math.max(0,Math.min(a.right,b.right)-Math.max(a.left,b.left))*Math.max(0,Math.min(a.bottom,b.bottom)-Math.max(a.top,b.top));
@@ -87,7 +106,7 @@ public final class Semantic {
     static boolean complete(String s) { return s.contains("1원") && s.contains("받았"); }
     public static Found inspect(Scene scene) {
         List<Node> blocks=blocks(scene.nodes);
-        Node points=unique(blocks,Semantic::points),anchor=unique(blocks,Semantic::anchor);
+        Node points=unique(pointsNodes(blocks),Semantic::points),anchor=unique(blocks,Semantic::anchor);
         Node waiting=unique(blocks,Semantic::waiting),complete=unique(blocks,Semantic::complete);
         // Any waiting observation vetoes completion, even when waiting itself is ambiguous.
         if(waiting==null) waiting=blocks.stream().filter(n->n.enabled && (waiting(normalize(n.text)) || waiting(normalize(n.description)))).findFirst().orElse(null);
@@ -105,9 +124,26 @@ public final class Semantic {
         cards.sort(Comparator.comparingInt((Node n)->n.box.top).thenComparingInt(n->n.clickable?0:1));
         if(cards.isEmpty()) return null;
         Node first=cards.get(0);
-        for(Node n:cards) if(n.clickable && n.box.contains(first.box)) { first=n; break; }
+        first=adClickTarget(scene,anchor,first);
         for(Node n:cards) if(n!=first && Math.abs(n.box.top-first.box.top)<anchor.box.height() && !n.box.contains(first.box) && !first.box.contains(n.box) && !samePosition(n.box,first.box)) return null;
         return first;
+    }
+    /** Prefer an actual eligible card ancestor, even if a title exposes a no-op click. */
+    public static Node adClickTarget(Scene scene,Node anchor,Node selected) {
+        if(selected==null || anchor==null)return selected;
+        Map<Integer,Node> byId=new HashMap<>();for(Node n:scene.nodes)byId.put(n.id,n);
+        Node current=byId.get(selected.parent);Set<Integer> seen=new HashSet<>();
+        for(int depth=0;current!=null && depth<32 && seen.add(current.id);depth++,current=byId.get(current.parent))
+            if(current.clickable && current.box.contains(selected.box) && adRejection(scene,anchor,current)==null)return current;
+        return selected;
+    }
+    public static String targetDiagnostics(Scene scene,Node selected,Node target) {
+        Map<Integer,Node> byId=new HashMap<>();for(Node n:scene.nodes)byId.put(n.id,n);
+        StringBuilder out=new StringBuilder("selectedId="+selected.id+" targetId="+target.id+" bounds="+target.box+" clickable="+target.clickable+" parentChain=");
+        Set<Integer> seen=new HashSet<>();Node current=selected;
+        for(int depth=0;current!=null && depth<32 && seen.add(current.id);depth++,current=byId.get(current.parent))
+            out.append("{").append(current.id).append(" parent=").append(current.parent).append(" bounds=").append(current.box).append(" clickable=").append(current.clickable).append("}");
+        return out.toString();
     }
     private static String adRejection(Scene scene,Node anchor,Node n) {
         Box b=n.box,a=anchor.box;
@@ -128,7 +164,7 @@ public final class Semantic {
     public static String diagnostics(Scene scene,Found found) {
         List<Node> blocks=blocks(scene.nodes);
         StringBuilder out=new StringBuilder(found.summary());
-        explain(out,"points",found.points,blocks,Semantic::points);
+        explain(out,"points",found.points,pointsNodes(blocks),Semantic::points);
         explain(out,"anchor",found.anchor,blocks,Semantic::anchor);
         out.append("\nad=").append(describe(found.ad));
         if(found.ad!=null)out.append(detail(found.ad));

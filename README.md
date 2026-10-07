@@ -1,6 +1,6 @@
-# 1원 받기 3.0-beta2
+# 1원 받기 3.0-beta3
 
-Android 14/API 34 이상. `v3-universal` 실험 브랜치이며 main/v2.2에 병합하지 않습니다. versionCode 10. 앱 이름과 제작자 표시, 반복 설정, 조작창 디자인은 유지합니다.
+Android 14/API 34 이상. `v3-universal` 실험 브랜치이며 main/v2.2에 병합하지 않습니다. versionCode 11. 앱 이름과 제작자 표시, 반복 설정, 조작창 디자인은 유지합니다.
 
 ## 사용
 
@@ -11,7 +11,7 @@ Android 14/API 34 이상. `v3-universal` 실험 브랜치이며 main/v2.2에 병
 ## 구조와 실제 확인
 
 - `AutomationService`: Android 접근성 adapter. 화면 관찰과 Engine 변경, 입력 dispatch/callback은 main thread에서 직렬 실행합니다.
-- `Semantic`: text 및 contentDescription, 실제 hierarchy/clickable parent와 현재 bounds를 사용합니다. `내 포인트`는 공백/줄바꿈을 제거한 의미 label 및 label 뒤 잔액 표기로 찾고 출금/확인/알림 메뉴는 제외합니다. resourceId는 같은 session에서 정확한 label과 함께 관찰한 ID만 우선 조회에 사용합니다. ID만으로 사라진 label을 만들어내지 않고 text/description 또는 OCR의 현재 의미를 확인합니다.
+- `Semantic`: text 및 contentDescription, 실제 hierarchy/clickable parent와 현재 bounds를 사용합니다. `내 포인트` 단독 label, label+잔액, label+잔액+출금은 허용하며 출금/확인/알림 메뉴와 다른 이벤트 문구는 제외합니다. resourceId는 같은 session에서 정확한 label과 함께 관찰한 ID만 우선 조회에 사용합니다. ID만으로 사라진 label을 만들어내지 않고 text/description 또는 OCR의 현재 의미를 확인합니다.
 - `TreeWalk`: points 우선 platform text query 후 일반 BFS를 최대 2,000 node/80ms로 제한합니다. 제한까지 얻은 결과는 유지하고 비가시 부모 아래 자식도 탐색합니다. 이 한계 밖에 있는 target은 OCR fallback으로 찾습니다. 한 번의 OS binder 호출 소요시간까지 앱이 보장할 수는 없습니다.
 - `Engine`: action 예약 ID로 중복 dispatch를 막습니다. Android 요청 수락은 성공 카운트가 아닙니다. gesture callback도 입력 완료 여부만 나타내며 **기대한 다음 화면**이 확인되어야 성공입니다.
 - `ObservationGate`/`OcrTicket`: generation/cycle/state/action epoch/package/window/현재 bounds와 screenshot 나이를 확인합니다. 무관한 접근성 이벤트나 전체 트리 fingerprint 변화는 OCR을 무효화하지 않습니다.
@@ -52,3 +52,7 @@ HOME (points + anchor + 광고)
 ## beta2 회귀 복구
 
 v2.2 원본과 동일 입력으로 첫 광고 결정 회귀를 재현했습니다. text 우선/빈 text에서 description fallback, description 줄 결합, points+잔액, HOME 광고 결정 조건을 복구했습니다. 같은 UI의 부모/자식 의미 중복은 실제 hierarchy로 제거하되 서로 떨어진 복수 label은 계속 ambiguous로 처리합니다. 고급 로그는 탈락 원인 및 selector/bounds를 표시하며 잔액·광고 제목은 생략합니다. 자세한 비교 및 검증 범위는 [beta2 회귀 기록](docs/V3-BETA2-REGRESSION.md)을 참고하세요.
+
+## beta3 첫 광고 진입 수정
+
+포인트 잔액 뒤 출금이 합쳐진 label을 허용하고, 같은 영역의 중복 및 메뉴 문맥을 검사합니다. 광고 클릭은 실제 hierarchy의 광고 카드 조건을 만족하는 부모를 사용합니다. 첫 요청 뒤 points가 누락되어도 fresh anchor+ad가 남아 있고 내역/대기/완료와 모순되지 않으면 1초 후 새 대상에 gesture fallback을 시도합니다. 성공은 실제 광고 대기/완료 화면으로만 확인합니다. 요청 대상 ID/부모 체인/bounds와 1초 후 관찰을 고급 로그에 남깁니다. [beta3 조사·인수인계](docs/V3-BETA3-REGRESSION.md)를 참고하세요. 실기기 검증은 아직 수행하지 않았습니다.

@@ -23,7 +23,7 @@ final class Diagnostics {
         if(disk!=null && !written.equals(latest)){disk.removeCallbacks(save);disk.postDelayed(save,300);}
     }
     private static final Runnable save=()->{String current; synchronized(Diagnostics.class){current=latest;written=current;}write("last-state.txt",current);};
-    static void error(Throwable error){if(disk!=null)disk.post(()->write("last-error.txt",describe(error)));}
+    static void error(Throwable error){String report=describe(error);if(disk!=null)disk.post(()->write("last-error.txt",report));}
     private static synchronized void write(String name,String text) {
         if(directory==null)return;
         android.util.AtomicFile file=new android.util.AtomicFile(new File(directory,name));FileOutputStream stream=null;

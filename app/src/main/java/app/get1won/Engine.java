@@ -13,6 +13,7 @@ public final class Engine {
     public volatile String reason="대상 화면에서 시작해주세요.",lastAction="none",lastSemanticResult="none",lastSuccess="없음";
     private int limit,attempts,pointsAttempts;
     private long entered,lastTap,lastPointsTap,reserved,gesture,gestureSince;
+    private boolean adReobserved;
     private final Consumer<String> log;
     public Engine(Consumer<String> log) { this.log=log; }
     public boolean active() { return state!=State.IDLE && state!=State.PAUSED; }
@@ -63,12 +64,16 @@ public final class Engine {
         switch(state) {
             case HOME -> { if(f.home() && f.ad()!=null) return decide(Action.AD,f.ad(),1); }
             case AD_ENTRY -> {
-                if(!f.home() && !f.history() && (f.waiting()!=null || f.complete()!=null)) {
+                if(!adReobserved && now-lastTap>=1000) {
+                    adReobserved=true;log.accept("AD fresh observation elapsedMs="+(now-lastTap)+" "+f.summary());
+                }
+                if(f.anchor()==null && !f.home() && !f.history() && (f.waiting()!=null || f.complete()!=null)) {
                     success(0,"광고 화면 진입");move(State.REWARD,now);
                     if(f.waiting()==null && f.complete()!=null)return decide(Action.BACK_REWARD,null,0);
-                } else if(f.home() && now-lastTap>=1000) {
+                } else if((f.home() || f.anchor()!=null && f.ad()!=null && !f.history() && f.waiting()==null && f.complete()==null) && now-lastTap>=1000) {
+                    log.accept("AD fresh observation elapsedMs="+(now-lastTap)+" transition=false "+f.summary());
                     if(attempts>=3)pause("광고 화면 진입을 3회 확인하지 못했어요.");
-                    else if(f.ad()!=null)return decide(Action.AD,f.ad(),attempts+1);
+                    else if(f.ad()!=null){log.accept("AD decision: fresh target gesture fallback");return decide(Action.AD,f.ad(),attempts+1);}
                 }
             }
             case REWARD -> { if(!f.home() && !f.history() && f.waiting()==null && f.complete()!=null)return decide(Action.BACK_REWARD,null,0); }
@@ -100,7 +105,7 @@ public final class Engine {
         if(!current(d) || reserved!=d.id)return;
         reserved=0;lastAction=d.action+" attempt="+d.attempt+" accepted="+accepted;log.accept("동작 요청: "+lastAction);
         switch(d.action) {
-            case AD -> { attempts=d.attempt;lastTap=now;if(state==State.HOME)move(State.AD_ENTRY,now); }
+            case AD -> { attempts=d.attempt;lastTap=now;adReobserved=false;if(state==State.HOME)move(State.AD_ENTRY,now); }
             case POINTS -> { pointsAttempts=d.attempt;lastPointsTap=now;if(state==State.WAIT_FOR_POINTS)move(State.POINTS_ENTRY,now); }
             case BACK_REWARD -> { if(accepted)move(State.WAIT_FOR_POINTS,now);else pause("뒤로가기를 요청하지 못했어요."); }
             case BACK_HISTORY -> { if(accepted)move(State.HOME_AFTER_HISTORY,now);else pause("뒤로가기를 요청하지 못했어요."); }

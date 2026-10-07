@@ -110,7 +110,7 @@ public final class AutomationService extends AccessibilityService {
             Semantic.Scene merged=Semantic.mergeOcr(fresh.scene,nodes);
             AppState.log("OCR 성공 nodes="+nodes.size()+" "+found.summary());
             evaluate(new Snapshot(merged,fresh.handles,fresh.window,fresh.pkg,fresh.count,fresh.partial),found);
-        } catch(RuntimeException e){Diagnostics.error(e);engine.pause("글자 인식 결과 처리 오류로 멈췄어요.");}
+        } catch(RuntimeException e){Diagnostics.error(new IllegalStateException("AutomationService.acceptOcr: merge/inspect/evaluate ticket="+ticket.id()+" state="+engine.state,e));engine.pause("글자 인식 결과 처리 오류로 멈췄어요.");}
         Diagnostics.record(engine);updatePanel();if(engine.active())schedule(250);
     }
     public boolean valid(OcrTicket t) {
@@ -121,6 +121,7 @@ public final class AutomationService extends AccessibilityService {
         if(!f.summary().equals(engine.lastSemanticResult))AppState.log(diagnostic);
         Engine.Decision decision=engine.observe(f,SystemClock.uptimeMillis());
         if(decision==null)return;
+        if(decision.action()==Engine.Action.AD)AppState.log("AD decision observation: "+f.summary());
         // Recheck the window immediately before dispatch. Handles are scoped to this snapshot only.
         try(WindowIdentity live=window()) {
             if(live==null){engine.defer(decision);return;}
@@ -134,11 +135,12 @@ public final class AutomationService extends AccessibilityService {
             AppState.log("BACK "+(accepted?"요청 성공 / 실제 복귀 대기":"요청 실패"));
             engine.submitted(decision,accepted,SystemClock.uptimeMillis());return;
         }
-        Semantic.Node node=Semantic.clickParent(s.scene,decision.target());
+        Semantic.Node node=decision.action()==Engine.Action.AD?decision.target():Semantic.clickParent(s.scene,decision.target());
         if(node==null || node.box().width()==0 || node.box().height()==0 || !s.scene.screen().contains(node.box())) {
             engine.pause("현재 클릭 bounds를 확인하지 못했어요.");return;
         }
-        if(movePanelAway(node.box())){engine.defer(decision);return;}
+        AppState.log(decision.action()+" decision attempt="+decision.attempt()+" window="+s.window+" "+Semantic.targetDiagnostics(s.scene,decision.target(),node));
+        if(movePanelAway(node.box())){AppState.log("overlay moved: action deferred / fresh target 재탐색");engine.defer(decision);return;}
         AccessibilityNodeInfo handle=s.handles.get(node.id());
         if(decision.attempt()==1 && node.clickable() && handle!=null) {
             boolean accepted=handle.performAction(AccessibilityNodeInfo.ACTION_CLICK);
