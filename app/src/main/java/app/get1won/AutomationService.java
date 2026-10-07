@@ -187,7 +187,9 @@ public final class AutomationService extends AccessibilityService {
     private void updatePanel() {
         if(panel==null || closed)return;
         panel.setVisibility(session?View.VISIBLE:View.GONE);boolean running=engine.active();
-        status.setText(running?"● 실행 중":engine.reason);status.setTextSize(running?12:16);
+        int repeats=AppState.profile.repeats;
+        String repeatLabel=repeats==0?"계속":repeats+"회";
+        status.setText(running?"● 실행 중 · "+repeatLabel:engine.reason);status.setTextSize(running?12:16);
         start.setVisibility(running?View.GONE:View.VISIBLE);stop.setVisibility(running?View.VISIBLE:View.GONE);
         int width=dp(running?108:150+AppState.profile.panelSize*12);
         if(panelParams.width!=width) { panelParams.width=width;wm.updateViewLayout(panel,panelParams); }
