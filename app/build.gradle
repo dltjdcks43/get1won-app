@@ -9,7 +9,7 @@ android {
     buildFeatures { buildConfig true }
     namespace 'app.get1won'
     compileSdk 36
-    defaultConfig { applicationId 'app.get1won'; minSdk 34; targetSdk 36; versionCode 7; versionName '2.1'; testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
+    defaultConfig { applicationId 'app.get1won'; minSdk 34; targetSdk 36; versionCode 8; versionName '2.2'; testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
         buildConfigField 'String', 'GIT_SHA', '"' + gitSha + '"'
     }
     compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
