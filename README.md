@@ -1,6 +1,6 @@
-# 1원 받기 3.0-beta5
+# 1원 받기 3.0-beta6
 
-Android 14/API 34 이상. `v3-universal` 실험 브랜치이며 main/v2.2에 병합하지 않습니다. versionCode 13. 앱 이름과 제작자 표시, 반복 설정, 조작창 디자인은 유지합니다.
+Android 14/API 34 이상. `v3-universal` 실험 브랜치이며 main/v2.2에 병합하지 않습니다. versionCode 14. 앱 이름과 제작자 표시, 반복 설정, 조작창 디자인은 유지합니다.
 
 ## 사용
 
@@ -64,3 +64,7 @@ beta3에서 실제 5 cycle 완료 후 HOME anchor를 놓친 보고를 기준으�
 ## beta5 공간 기반 anchor 증거
 
 beta4의 단어 목록과 동일 출처 제한을 대체했습니다. 현재 장면의 좁은 영역에서 `구경`, `1원`, `받` 의미 증거를 조합하며 Accessibility/OCR 혼합도 위치가 대응할 때만 허용합니다. 문장부호·조사·추가 짧은 안내를 허용하고 구경 의미 없는 이벤트는 거부합니다. 마지막 중단 요약은 anchor 누락 시 후보 수와 탈락 이유 한 줄을 추가해 최대 12줄입니다. [beta5 기록](docs/V3-BETA5-REGRESSION.md).
+
+## beta6 HOME points 인식
+
+`내`/`포인트`가 인접한 두 node로 분리된 label과 `내 포인트 잔액 5,471원 출금` 같은 정상 잔액 영역을 처리합니다. 메뉴/이벤트 문맥과 먼 중복은 거부합니다. 마지막 중단 요약에 `points candidates=N reject=REASON` 한 줄을 추가했으며 HOME timeout은 전환 실패 대신 요소 누락을 표시합니다. anchor/ad와 광고 이후 흐름은 유지합니다. [beta6 기록](docs/V3-BETA6-REGRESSION.md).

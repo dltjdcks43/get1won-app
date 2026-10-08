@@ -29,17 +29,26 @@ public final class Semantic {
     private static String describe(Node n) { return n==null?"not found":"found source="+n.source+" bounds="+n.box; }
     // Match the v2.2 adapter: use description only when the text is empty.
     static String label(Node n) { return n.text.isBlank()?n.description:n.text; }
-    static boolean points(String s) { return s.equals("내포인트") || s.matches("내포인트[0-9,]+(?:[Pp]|원|포인트)?(?:출금)?[›>]?"); }
+    static boolean points(String s) { return s.equals("내포인트") || s.matches("내포인트(?:잔액)?[:：]?[0-9,]+(?:[Pp]|원|포인트)?(?:출금)?[›>]?"); }
     private static boolean pointsContext(Node n,Map<Integer,Node> byId) {
         Node current=n;Set<Integer> seen=new HashSet<>();
         for(int depth=0;current!=null && depth<32 && seen.add(current.id);depth++,current=byId.get(current.parent)) {
             // Inspect only labels describing this points region, not arbitrary surrounding page copy.
             for(String raw:List.of(current.text,current.description)) {
                 String s=normalize(raw);
-                if((current==n || current.box.height()<=n.box.height()*4) && s.contains("내포인트") && !points(s))return false;
+                if((current==n || current.box.height()<=n.box.height()*4) && (s.contains("내포인트") && !points(s) || pointsEvent(s)))return false;
             }
         }
+        // OCR/query copies have no native parent. A local rejected native label still applies.
+        for(Node region:byId.values())if(region.enabled && region.box.height()<=n.box.height()*4
+            && (region.box.contains(n.box) || samePosition(region.box,n.box)))
+            for(String raw:List.of(region.text,region.description)) {
+                String s=normalize(raw);if(s.contains("내포인트") && !points(s))return false;
+            }
         return true;
+    }
+    private static boolean pointsEvent(String s) {
+        return s.contains("광고") || s.contains("이벤트") || s.contains("알림") || s.contains("동의") || s.contains("출석");
     }
     private record PointIdentity(Box box,String text,String description) {}
     private static PointIdentity pointIdentity(Node n) { return new PointIdentity(n.box,n.text,n.description); }
@@ -48,6 +57,42 @@ public final class Semantic {
         Set<PointIdentity> rejected=new HashSet<>();
         for(Node n:nodes)if((points(normalize(n.text)) || points(normalize(n.description))) && !pointsContext(n,byId))rejected.add(pointIdentity(n));
         return nodes.stream().filter(n->!rejected.contains(pointIdentity(n))).toList();
+    }
+    public record PointsEvidence(Node node,int candidates,String reason) {
+        public String summary(){return "points candidates="+candidates+" reject="+reason;}
+    }
+    private static boolean pointLabel(Node n) { return points(normalize(n.text)) || points(normalize(n.description)); }
+    private static boolean pointsNext(Node a,Node b) {
+        Box x=a.box,y=b.box;int h=Math.min(x.height(),y.height());
+        if(h<=0 || Math.max(x.height(),y.height())>h*2 || x.overlaps(y))return false;
+        int vertical=Math.min(x.bottom,y.bottom)-Math.max(x.top,y.top);
+        int horizontal=Math.min(x.right,y.right)-Math.max(x.left,y.left);
+        return y.left>=x.right && y.left-x.right<=h && vertical>=h*.6
+            || y.top>=x.bottom && y.top-x.bottom<=h*.5 && horizontal>=Math.min(x.width(),y.width())*.5;
+    }
+    private static List<Node> pointsBlocks(Scene scene) {
+        List<Node> out=new ArrayList<>(scene.nodes);Map<Integer,Node> byId=new HashMap<>();
+        for(Node n:scene.nodes)byId.put(n.id,n);
+        List<Node> left=scene.nodes.stream().filter(n->n.enabled && normalize(label(n)).equals("내")).toList();
+        List<Node> right=scene.nodes.stream().filter(n->n.enabled && normalize(label(n)).equals("포인트")).toList();
+        if(left.size()>32 || right.size()>32)return out;
+        Set<Node> parents=new HashSet<>();int id=-2;
+        for(Node a:left)for(Node b:right)if(pointsNext(a,b) && scene.screen.contains(a.box.union(b.box))) {
+            Node combined=new Node(id--,a.parent==b.parent?a.parent:-1,"내 포인트",a.box.union(b.box),false,true,
+                a.source.equals(b.source)?a.source:"Accessibility+OCR");
+            if(!pointsContext(a,byId) || !pointsContext(b,byId) || !pointsContext(combined,byId))continue;
+            out.add(combined);
+            for(Node parent:scene.nodes)if(pointLabel(parent) && isAncestor(parent,a,byId) && isAncestor(parent,b,byId))parents.add(parent);
+        }
+        out.removeAll(parents);return out;
+    }
+    public static PointsEvidence pointsEvidence(Scene scene) {
+        List<Node> blocks=pointsBlocks(scene),accepted=pointsNodes(blocks);
+        int candidates=(int)blocks.stream().filter(n->n.enabled &&
+            (normalize(n.text).contains("내포인트") || normalize(n.description).contains("내포인트"))).count();
+        Node selected=unique(accepted,Semantic::points);
+        boolean any=accepted.stream().anyMatch(n->n.enabled && pointLabel(n));
+        return new PointsEvidence(selected,candidates,selected!=null?"none":any?"ambiguous_distinct_targets":candidates>0?"context_rejected":"label_missing");
     }
     static boolean anchor(String s) { return s.contains("구경") && s.contains("1원") && s.contains("받"); }
     static boolean samePosition(Box a, Box b) {
@@ -186,7 +231,7 @@ public final class Semantic {
     static boolean complete(String s) { return s.contains("1원") && s.contains("받았"); }
     public static Found inspect(Scene scene) {
         List<Node> blocks=blocks(scene.nodes);
-        Node points=unique(pointsNodes(blocks),Semantic::points),anchor=anchorEvidence(scene).node();
+        Node points=pointsEvidence(scene).node(),anchor=anchorEvidence(scene).node();
         Node waiting=unique(blocks,Semantic::waiting),complete=unique(blocks,Semantic::complete);
         // Any waiting observation vetoes completion, even when waiting itself is ambiguous.
         if(waiting==null) waiting=blocks.stream().filter(n->n.enabled && (waiting(normalize(n.text)) || waiting(normalize(n.description)))).findFirst().orElse(null);
@@ -244,7 +289,8 @@ public final class Semantic {
     public static String diagnostics(Scene scene,Found found) {
         List<Node> blocks=blocks(scene.nodes);
         StringBuilder out=new StringBuilder(found.summary());
-        explain(out,"points",found.points,pointsNodes(blocks),Semantic::points);
+        explain(out,"points",found.points,pointsNodes(pointsBlocks(scene)),Semantic::points);
+        out.append("\n").append(pointsEvidence(scene).summary());
         out.append("\n").append(anchorEvidence(scene).summary());
         out.append("\nad=").append(describe(found.ad));
         if(found.ad!=null)out.append(detail(found.ad));

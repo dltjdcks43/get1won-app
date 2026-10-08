@@ -9,12 +9,13 @@ import java.nio.charset.StandardCharsets;
 /** Bounded local diagnostics: persist changes, plus uncaught stack and OS exit/ANR trace. */
 final class Diagnostics {
     private static File directory;private static Handler disk;private static volatile String latest="";private static String written="";
-    private static String version="",lastOcr="없음",transition="없음",stopSummary="",anchorStatus="";
+    private static String version="",lastOcr="없음",transition="없음",stopSummary="",anchorStatus="",pointsStatus="";
     private static Engine.State observedState=Engine.State.IDLE;
     private static long pauseGeneration=-1;
+    static synchronized void points(String status){pointsStatus=status;}
     static synchronized void anchor(String status){anchorStatus=status;}
     static synchronized void ocr(String status){lastOcr=status;}
-    static synchronized void newSession(){lastOcr="이번 실행에서 요청 없음";transition="없음";anchorStatus="";observedState=Engine.State.IDLE;}
+    static synchronized void newSession(){lastOcr="이번 실행에서 요청 없음";transition="없음";anchorStatus="";pointsStatus="";observedState=Engine.State.IDLE;}
     static synchronized void install(Context context) {
         if(directory!=null)return;version=AppVersion.read(context).footer();directory=context.getFilesDir();HandlerThread thread=new HandlerThread("LocalDiagnostics");thread.start();disk=new Handler(thread.getLooper());
         Thread.UncaughtExceptionHandler previous=Thread.getDefaultUncaughtExceptionHandler();
@@ -29,7 +30,7 @@ final class Diagnostics {
             transition=observedState+" -> "+e.state+" / cycle="+e.cycleId;
         observedState=e.state;
         if(e.state==Engine.State.PAUSED && pauseGeneration!=e.generation) {
-            pauseGeneration=e.generation;stopSummary=StopSummary.format(version,e,lastOcr,transition,anchorStatus);
+            pauseGeneration=e.generation;stopSummary=StopSummary.format(version,e,lastOcr,transition,anchorStatus,pointsStatus);
             String report=stopSummary;if(disk!=null)disk.post(()->write("last-stop.txt",report));
         }
         latest="state="+e.state+"\ncycleId="+e.cycleId+"\ncompleted="+e.completed+"\nlastSuccess="+e.lastSuccess+"\nlastAction="+e.lastAction+"\nlastSemanticResult="+e.lastSemanticResult;

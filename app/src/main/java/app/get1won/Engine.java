@@ -59,7 +59,7 @@ public final class Engine {
         lastSemanticResult=f.summary();
         if(!active())return null;
         if(gesture!=0 && now-gestureSince>=3000) { pause("gesture 완료 응답이 없어 멈췄어요.");return null; }
-        if(expired(now)) { log.accept(f.failure());pause(state==State.POINTS_ENTRY?"내 포인트를 열지 못했어요.":"화면 전환을 확인하지 못해 멈췄어요. state="+state);return null; }
+        if(expired(now)) { log.accept(f.failure());pause(state==State.HOME?(f.home() && f.ad()!=null?"HOME 광고 입력을 시작하지 못해 멈췄어요.":"HOME 화면 요소를 확인하지 못해 멈췄어요. "+f.failure().replace("HOME FAIL reason: ","")):state==State.POINTS_ENTRY?"내 포인트를 열지 못했어요.":"화면 전환을 확인하지 못해 멈췄어요. state="+state);return null; }
         if(busy())return null;
         switch(state) {
             case HOME -> { if(f.home() && f.ad()!=null) return decide(Action.AD,f.ad(),1); }

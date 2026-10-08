@@ -118,6 +118,7 @@ public final class AutomationService extends AccessibilityService {
         return !closed && session && engine.active() && t==pending && t.current(engine.generation,engine.cycleId,engine.state,engine.actionEpoch);
     }
     private void evaluate(Snapshot s,Semantic.Found f) {
+        Diagnostics.points(engine.state==Engine.State.HOME?Semantic.pointsEvidence(s.scene).summary():"");
         Diagnostics.anchor(engine.state==Engine.State.HOME && f.anchor()==null?Semantic.anchorEvidence(s.scene).summary():"");
         diagnostic="package="+s.pkg+" window="+s.window+" nodes="+s.count+" partial="+s.partial+"\n"+(engine.state==Engine.State.HOME?Semantic.diagnostics(s.scene,f):f.summary());
         if(!f.summary().equals(engine.lastSemanticResult))AppState.log(diagnostic);
