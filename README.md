@@ -1,6 +1,6 @@
-# 1원 받기 3.0-beta6
+# 1원 받기 3.0-beta7
 
-Android 14/API 34 이상. `v3-universal` 실험 브랜치이며 main/v2.2에 병합하지 않습니다. versionCode 14. 앱 이름과 제작자 표시, 반복 설정, 조작창 디자인은 유지합니다.
+Android 14/API 34 이상. `v3-universal` 실험 브랜치이며 main/v2.2에 병합하지 않습니다. versionCode 15. 앱 이름과 제작자 표시, 반복 설정, 조작창 디자인은 유지합니다.
 
 ## 사용
 
@@ -68,3 +68,7 @@ beta4의 단어 목록과 동일 출처 제한을 대체했습니다. 현재 장
 ## beta6 HOME points 인식
 
 `내`/`포인트`가 인접한 두 node로 분리된 label과 `내 포인트 잔액 5,471원 출금` 같은 정상 잔액 영역을 처리합니다. 메뉴/이벤트 문맥과 먼 중복은 거부합니다. 마지막 중단 요약에 `points candidates=N reject=REASON` 한 줄을 추가했으며 HOME timeout은 전환 실패 대신 요소 누락을 표시합니다. anchor/ad와 광고 이후 흐름은 유지합니다. [beta6 기록](docs/V3-BETA6-REGRESSION.md).
+
+## beta7 points 주변 프로모션 오거부 수정
+
+상위 page/promo의 알림 문구만으로 정상 points를 거부하지 않습니다. 후보 자체와 구조적으로 연결된 local 문맥을 검사하고, 내부 잔액·출금 영역이 있으면 바깥 wrapper 문구를 분리합니다. 기존 잘못된 points 메뉴 및 먼 중복 거부, 중단 요약, anchor/ad/전체 흐름은 유지합니다. [beta7 회귀 기록](docs/V3-BETA7-REGRESSION.md).

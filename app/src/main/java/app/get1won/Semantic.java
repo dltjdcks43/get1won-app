@@ -31,21 +31,40 @@ public final class Semantic {
     static String label(Node n) { return n.text.isBlank()?n.description:n.text; }
     static boolean points(String s) { return s.equals("내포인트") || s.matches("내포인트(?:잔액)?[:：]?[0-9,]+(?:[Pp]|원|포인트)?(?:출금)?[›>]?"); }
     private static boolean pointsContext(Node n,Map<Integer,Node> byId) {
-        Node current=n;Set<Integer> seen=new HashSet<>();
-        for(int depth=0;current!=null && depth<32 && seen.add(current.id);depth++,current=byId.get(current.parent)) {
-            // Inspect only labels describing this points region, not arbitrary surrounding page copy.
-            for(String raw:List.of(current.text,current.description)) {
-                String s=normalize(raw);
-                if((current==n || current.box.height()<=n.box.height()*4) && (s.contains("내포인트") && !points(s) || pointsEvent(s)))return false;
-            }
+        // A candidate's own label/description is local evidence, regardless of its ancestors.
+        for(String raw:List.of(n.text,n.description)) {
+            String s=normalize(raw);if(s.contains("내포인트") && !points(s) || pointsEvent(s))return false;
         }
-        // OCR/query copies have no native parent. A local rejected native label still applies.
-        for(Node region:byId.values())if(region.enabled && region.box.height()<=n.box.height()*4
-            && (region.box.contains(n.box) || samePosition(region.box,n.box)))
+        for(Node region:byId.values())if(region!=n && region.enabled && localPointsContext(region,n,byId))
             for(String raw:List.of(region.text,region.description)) {
+                // Generic promo words do not prove that an ancestor describes this points target.
                 String s=normalize(raw);if(s.contains("내포인트") && !points(s))return false;
             }
         return true;
+    }
+    private static boolean localPointsContext(Node region,Node candidate,Map<Integer,Node> byId) {
+        if(region.box.height()>candidate.box.height()*4
+            || !(region.box.contains(candidate.box) || samePosition(region.box,candidate.box)))return false;
+        boolean linked=isAncestor(region,candidate,byId) || samePosition(region.box,candidate.box);
+        // OCR and platform query copies may lack a parent; use a corresponding native label.
+        if(!linked)for(Node peer:byId.values())if(peer.enabled && pointLabel(peer)
+            && samePosition(peer.box,candidate.box) && isAncestor(region,peer,byId)){linked=true;break;}
+        if(!linked)return false;
+        // A real nested balance/withdrawal region separates the points label from page promotions.
+        for(Node inner:byId.values())if(inner!=region && inner!=candidate && inner.enabled
+            && inner.box.contains(candidate.box) && inner.box.height()<=candidate.box.height()*4
+            && isAncestor(region,inner,byId) && pointsRegionContents(inner,candidate,byId))return false;
+        return true;
+    }
+    private static boolean pointsRegionContents(Node region,Node candidate,Map<Integer,Node> byId) {
+        boolean balance=false,withdrawal=false;
+        for(Node child:byId.values())if(child.enabled && isAncestor(region,child,byId)) {
+            int gap=Math.max(0,Math.max(child.box.top-candidate.box.bottom,candidate.box.top-child.box.bottom));
+            if(gap>candidate.box.height()*2)continue;
+            String s=normalize(label(child));
+            balance|=s.matches("(?:잔액)?[0-9,]+(?:원|[Pp]|포인트)");withdrawal|=s.equals("출금");
+        }
+        return balance && withdrawal;
     }
     private static boolean pointsEvent(String s) {
         return s.contains("광고") || s.contains("이벤트") || s.contains("알림") || s.contains("동의") || s.contains("출석");
