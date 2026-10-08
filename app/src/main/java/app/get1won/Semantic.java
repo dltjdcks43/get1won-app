@@ -31,11 +31,10 @@ public final class Semantic {
     static String label(Node n) { return n.text.isBlank()?n.description:n.text; }
     static boolean points(String s) { return s.equals("내포인트") || s.matches("내포인트(?:잔액)?[:：]?[0-9,]+(?:[Pp]|원|포인트)?(?:출금)?[›>]?"); }
     private static boolean pointsContext(Node n,Map<Integer,Node> byId) {
-        // A candidate's own label/description is local evidence, regardless of its ancestors.
-        for(String raw:List.of(n.text,n.description)) {
-            String s=normalize(raw);if(s.contains("내포인트") && !points(s) || pointsEvent(s))return false;
-        }
-        for(Node region:byId.values())if(region!=n && region.enabled && localPointsContext(region,n,byId))
+        // Match the selector: nonblank text is authoritative; description is only a fallback.
+        String own=normalize(label(n));
+        if(own.contains("내포인트") && !points(own) || pointsEvent(own))return false;
+        for(Node region:byId.values())if(region!=n && region.enabled && !points(normalize(region.text)) && localPointsContext(region,n,byId))
             for(String raw:List.of(region.text,region.description)) {
                 // Generic promo words do not prove that an ancestor describes this points target.
                 String s=normalize(raw);if(s.contains("내포인트") && !points(s))return false;
@@ -127,13 +126,16 @@ public final class Semantic {
     }
     /** Pairwise agreement prevents a large container from bridging distant duplicate labels. */
     static Node unique(List<Node> nodes, Predicate<String> matcher) {
+        return unique(nodes,matcher,(a,b)->samePosition(a.box,b.box));
+    }
+    private static Node unique(List<Node> nodes, Predicate<String> matcher,java.util.function.BiPredicate<Node,Node> same) {
         List<Node> candidates=nodes.stream().filter(n->n.enabled && (matcher.test(normalize(n.text)) || matcher.test(normalize(n.description)))).toList();
         Map<Integer,Node> byId=new HashMap<>();
         for(Node n:nodes)if(n.id>=0)byId.put(n.id,n);
         List<Node> all=candidates;
         candidates=all.stream().filter(n->all.stream().noneMatch(child->child!=n && isAncestor(n,child,byId))).toList();
         for(int i=0;i<candidates.size();i++) for(int j=i+1;j<candidates.size();j++)
-            if(!samePosition(candidates.get(i).box,candidates.get(j).box)) return null;
+            if(!same.test(candidates.get(i),candidates.get(j))) return null;
         return candidates.stream().min(Comparator.comparingInt((Node n)->n.source.equals("Accessibility")?0:1).thenComparingLong(n->(long)n.box.width()*n.box.height())).orElse(null);
     }
     private static boolean isAncestor(Node ancestor,Node child,Map<Integer,Node> byId) {
@@ -216,11 +218,27 @@ public final class Semantic {
             if(candidates.size()>256)return new AnchorEvidence(null,candidates.size(),"candidate_limit");
         }
         candidates.removeAll(parents);hierarchy.addAll(candidates);
-        Node selected=unique(hierarchy,Semantic::anchor);
+        Node selected=unique(hierarchy,Semantic::anchor,(a,b)->sameAnchorObservation(a,b,scene.screen));
         String reason=selected!=null?"none":!candidates.isEmpty()?"ambiguous_distinct_targets":
             allMask==7?"spatial_or_context_rejected":rejected>0?"excluded_event":oversized>0?"region_too_large":
             (allMask&1)==0?"browse_missing":(allMask&2)==0?"one_won_missing":"receive_missing";
         return new AnchorEvidence(selected,candidates.size(),reason);
+    }
+    private static String anchorPhrase(Node n) {
+        return anchorText(anchorMask(n.text,n.source)==7?n.text:n.description);
+    }
+    private static boolean sameAnchorObservation(Node a,Node b,Box screen) {
+        if(samePosition(a.box,b.box))return true;
+        boolean crossSource=a.source.equals("Accessibility") && b.source.equals("OCR")
+            || b.source.equals("Accessibility") && a.source.equals("OCR");
+        if(!crossSource || !anchorPhrase(a).equals(anchorPhrase(b)))return false;
+        Box x=a.box,y=b.box;int h=Math.min(x.height(),y.height());
+        int vertical=Math.min(x.bottom,y.bottom)-Math.max(x.top,y.top);
+        int horizontal=Math.min(x.right,y.right)-Math.max(x.left,y.left);
+        // Same literal phrase, shared text row; allow native row padding around OCR ink only.
+        return h>0 && Math.max(x.height(),y.height())<=Math.min(h*4,screen.height()/8)
+            && vertical>=h*.8 && Math.abs(x.cy()-y.cy())<=h*.5
+            && horizontal>=Math.min(x.width(),y.width())*.9;
     }
     private static boolean anchorNear(AnchorPiece a,AnchorPiece b) {
         if(a.node.id==b.node.id)return false;
