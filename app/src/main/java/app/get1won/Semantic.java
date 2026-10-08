@@ -96,17 +96,60 @@ public final class Semantic {
             for(int j=i+1;j<original.size();j++) {
                 Node b=original.get(j); String y=normalize(label(b)),joined=x+y;
                 if(!a.enabled || !b.enabled || !adjacent(a,b)) continue;
-                if((!anchor(x) && !anchor(y) && anchor(joined)) || (!waiting(x) && !waiting(y) && waiting(joined)) || (!complete(x) && !complete(y) && complete(joined)))
+                if((!waiting(x) && !waiting(y) && waiting(joined)) || (!complete(x) && !complete(y) && complete(joined)))
                     result.add(new Node(-1,-1,label(a)+" "+label(b),a.box.union(b.box),false,true,a.source.equals(b.source)?a.source:"Accessibility+OCR"));
             }
         }
         return result;
     }
+    /** Anchor-only reconstruction: at most three short, ordered fragments from one source. */
+    private static List<Node> anchorBlocks(List<Node> original) {
+        List<Node> result=new ArrayList<>(original);
+        List<Node> pieces=original.stream().filter(n->n.enabled && n.box.width()>0 && n.box.height()>0)
+            .filter(n->{String s=normalize(label(n));return !s.isEmpty() && !anchor(s) && s.length()<=32
+                && s.replaceAll("다시|여기서|혜택|구경하고|구경하면|구경|1원|받아요", "").isEmpty();}).toList();
+        // Bound pathological trees; never truncate and choose an arbitrary subset of targets.
+        if(pieces.size()>128)return result;
+        Map<Integer,Node> byId=new HashMap<>();for(Node n:original)byId.put(n.id,n);
+        Set<Node> parents=new HashSet<>();
+        for(Node a:pieces)for(Node b:pieces)if(anchorNext(a,b)) {
+            addAnchor(result,parents,original,byId,List.of(a,b));
+            if(!anchor(normalize(label(a)+label(b))))for(Node c:pieces)
+                if(c!=a && anchorNext(b,c) && compactAnchor(a,b,c))addAnchor(result,parents,original,byId,List.of(a,b,c));
+        }
+        result.removeAll(parents);
+        return result;
+    }
+    private static boolean anchorNext(Node a,Node b) {
+        if(a==b || !a.source.equals(b.source) || a.box.overlaps(b.box))return false;
+        Box x=a.box,y=b.box;int h=Math.min(x.height(),y.height());
+        if(h<=0 || Math.max(x.height(),y.height())>h*2)return false;
+        int vertical=Math.min(x.bottom,y.bottom)-Math.max(x.top,y.top);
+        boolean row=y.left>=x.right && y.left-x.right<=h*2 && vertical>=h*.6;
+        int horizontal=Math.min(x.right,y.right)-Math.max(x.left,y.left);
+        boolean line=y.top>=x.bottom && y.top-x.bottom<=h && horizontal>=Math.min(x.width(),y.width())*.5;
+        return row || line;
+    }
+    private static boolean compactAnchor(Node a,Node b,Node c) {
+        Box box=a.box.union(b.box).union(c.box);
+        int h=Math.min(a.box.height(),Math.min(b.box.height(),c.box.height()));
+        return !a.box.overlaps(c.box) && box.height()<=h*5
+            && box.width()<=a.box.width()+b.box.width()+c.box.width()+h*4;
+    }
+    private static void addAnchor(List<Node> result,Set<Node> parents,List<Node> original,Map<Integer,Node> byId,List<Node> parts) {
+        String text=parts.stream().map(Semantic::label).reduce("",(a,b)->a+" "+b);
+        if(!anchor(normalize(text)))return;
+        Box box=parts.get(0).box;for(Node n:parts)box=box.union(n.box);
+        result.add(new Node(-1,-1,text,box,false,true,parts.get(0).source));
+        // Only proven native ancestors may be replaced by their reconstructed child label.
+        for(Node n:original)if((anchor(normalize(n.text)) || anchor(normalize(n.description)))
+            && parts.stream().allMatch(child->isAncestor(n,child,byId)))parents.add(n);
+    }
     static boolean waiting(String s) { return s.contains("3초") && s.contains("구경"); }
     static boolean complete(String s) { return s.contains("1원") && s.contains("받았"); }
     public static Found inspect(Scene scene) {
         List<Node> blocks=blocks(scene.nodes);
-        Node points=unique(pointsNodes(blocks),Semantic::points),anchor=unique(blocks,Semantic::anchor);
+        Node points=unique(pointsNodes(blocks),Semantic::points),anchor=unique(anchorBlocks(scene.nodes),Semantic::anchor);
         Node waiting=unique(blocks,Semantic::waiting),complete=unique(blocks,Semantic::complete);
         // Any waiting observation vetoes completion, even when waiting itself is ambiguous.
         if(waiting==null) waiting=blocks.stream().filter(n->n.enabled && (waiting(normalize(n.text)) || waiting(normalize(n.description)))).findFirst().orElse(null);
@@ -165,7 +208,7 @@ public final class Semantic {
         List<Node> blocks=blocks(scene.nodes);
         StringBuilder out=new StringBuilder(found.summary());
         explain(out,"points",found.points,pointsNodes(blocks),Semantic::points);
-        explain(out,"anchor",found.anchor,blocks,Semantic::anchor);
+        explain(out,"anchor",found.anchor,anchorBlocks(scene.nodes),Semantic::anchor);
         out.append("\nad=").append(describe(found.ad));
         if(found.ad!=null)out.append(detail(found.ad));
         else if(found.anchor==null)out.append(" reason=anchor_missing_or_ambiguous");

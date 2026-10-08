@@ -48,7 +48,7 @@ public final class AutomationService extends AccessibilityService {
         try(Snapshot s=snapshot()) {
             if(s==null || s.pkg.equals(getPackageName())) { engine.pause("대상 앱 화면을 열어주세요.");updatePanel();return; }
             if(analysisOnly){analysisOnly=false;diagnostic=Semantic.diagnostics(s.scene,Semantic.inspect(s.scene));return;}
-            engine.start(AppState.profile.repeats,SystemClock.uptimeMillis());observations.bind(s.pkg,s.window);
+            Diagnostics.newSession();engine.start(AppState.profile.repeats,SystemClock.uptimeMillis());observations.bind(s.pkg,s.window);
             AppState.log("시작 target package="+s.pkg+" window="+s.window);
         } catch(RuntimeException e){Diagnostics.error(e);engine.pause("시작 화면을 읽지 못했어요.");}
         updatePanel();schedule(0);
@@ -94,10 +94,10 @@ public final class AutomationService extends AccessibilityService {
         if(WindowOcr.preparationFailed){engine.pause("한국어 글자 인식을 준비하지 못했어요.");return;}
         if(!WindowOcr.ready)return;
         OcrTicket ticket=new OcrTicket(++ocrSequence,engine.generation,engine.cycleId,engine.state,engine.actionEpoch,s.window,s.pkg,now,"",s.scene.screen(),panelBox());
-        pending=ticket;lastOcrRequest=now;
+        pending=ticket;lastOcrRequest=now;Diagnostics.ocr("요청 ticket="+ticket.id()+" cycle="+ticket.cycle());
         if(!ocr.request(ticket,new WindowOcr.Result(){
             public void success(OcrTicket t,List<Semantic.Node> nodes,long timestamp){acceptOcr(t,nodes,timestamp);}
-            public void failure(OcrTicket t,String stage){if(valid(t)){pending=null;observations.failure(t,stage);schedule(250);}}
+            public void failure(OcrTicket t,String stage){if(valid(t)){pending=null;Diagnostics.ocr("실패 ticket="+t.id()+" "+stage);observations.failure(t,stage);schedule(250);}}
         }))pending=null;
     }
     public void acceptOcr(OcrTicket ticket,List<Semantic.Node> nodes,long frameTime) {
@@ -108,9 +108,10 @@ public final class AutomationService extends AccessibilityService {
             Semantic.Found found=observations.merge(ticket,fresh.scene,nodes,fresh.pkg,fresh.window,frameTime,SystemClock.uptimeMillis());
             if(found==null)return;
             Semantic.Scene merged=Semantic.mergeOcr(fresh.scene,nodes);
+            Diagnostics.ocr("성공 ticket="+ticket.id()+" cycle="+ticket.cycle()+" nodes="+nodes.size()+" anchor="+(found.anchor()!=null));
             AppState.log("OCR 성공 nodes="+nodes.size()+" "+found.summary());
             evaluate(new Snapshot(merged,fresh.handles,fresh.window,fresh.pkg,fresh.count,fresh.partial),found);
-        } catch(RuntimeException e){Diagnostics.error(new IllegalStateException("AutomationService.acceptOcr: merge/inspect/evaluate ticket="+ticket.id()+" state="+engine.state,e));engine.pause("글자 인식 결과 처리 오류로 멈췄어요.");}
+        } catch(RuntimeException e){Diagnostics.ocr("처리 오류 ticket="+ticket.id());Diagnostics.error(new IllegalStateException("AutomationService.acceptOcr: merge/inspect/evaluate ticket="+ticket.id()+" state="+engine.state,e));engine.pause("글자 인식 결과 처리 오류로 멈췄어요.");}
         Diagnostics.record(engine);updatePanel();if(engine.active())schedule(250);
     }
     public boolean valid(OcrTicket t) {
