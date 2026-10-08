@@ -102,54 +102,91 @@ public final class Semantic {
         }
         return result;
     }
-    /** Anchor-only reconstruction: at most three short, ordered fragments from one source. */
-    private static List<Node> anchorBlocks(List<Node> original) {
-        List<Node> result=new ArrayList<>(original);
-        List<Node> pieces=original.stream().filter(n->n.enabled && n.box.width()>0 && n.box.height()>0)
-            .filter(n->{String s=normalize(label(n));return !s.isEmpty() && !anchor(s) && s.length()<=32
-                && s.replaceAll("다시|여기서|혜택|구경하고|구경하면|구경|1원|받아요", "").isEmpty();}).toList();
-        // Bound pathological trees; never truncate and choose an arbitrary subset of targets.
-        if(pieces.size()>128)return result;
-        Map<Integer,Node> byId=new HashMap<>();for(Node n:original)byId.put(n.id,n);
-        Set<Node> parents=new HashSet<>();
-        for(Node a:pieces)for(Node b:pieces)if(anchorNext(a,b)) {
-            addAnchor(result,parents,original,byId,List.of(a,b));
-            if(!anchor(normalize(label(a)+label(b))))for(Node c:pieces)
-                if(c!=a && anchorNext(b,c) && compactAnchor(a,b,c))addAnchor(result,parents,original,byId,List.of(a,b,c));
+    private record AnchorPiece(Node node,String text,int mask) {}
+    public record AnchorEvidence(Node node,int candidates,String reason) {
+        public String summary(){return "anchor candidates="+candidates+" reject="+reason;}
+    }
+    private static String anchorText(String text) {
+        // Punctuation/spacing are not semantic evidence. No edit-distance matching for 구경.
+        return normalize(text).replaceAll("[\\p{P}]+", "");
+    }
+    private static boolean anchorExcluded(String s) {
+        return s.contains("동의") || s.contains("알림") || s.contains("출석") || s.contains("출금")
+            || s.contains("내포인트") || s.contains("확인하기") || s.contains("적립이벤트") || s.contains("받았");
+    }
+    private static int anchorMask(String text,String source) {
+        String s=anchorText(text);
+        // Only common OCR glyph confusion immediately next to 원; never guess the browse token.
+        boolean won=s.matches(".*(?<![0-9])1원.*") || source.contains("OCR") && s.matches(".*(?<![A-Za-z0-9])[Il|]원.*");
+        return (s.contains("구경")?1:0) | (won?2:0) | (s.contains("받")?4:0);
+    }
+    /** Evidence is local to this scene. At most three contributing pieces, no exact phrase whitelist. */
+    public static AnchorEvidence anchorEvidence(Scene scene) {
+        List<AnchorPiece> pieces=new ArrayList<>();List<Node> candidates=new ArrayList<>();
+        Map<Integer,Node> byId=new HashMap<>();List<Node> hierarchy=new ArrayList<>();
+        int allMask=0,rejected=0,oversized=0;
+        for(Node n:scene.nodes) {
+            byId.put(n.id,n);
+            hierarchy.add(new Node(n.id,n.parent,"",n.box,n.clickable,n.enabled,n.source,"",n.resourceId));
+            if(!n.enabled)continue;
+            Set<String> labels=new LinkedHashSet<>(List.of(n.text,n.description));
+            for(String raw:labels) {
+                String text=anchorText(raw);int mask=anchorMask(raw,n.source);if(mask==0)continue;
+                if(anchorExcluded(text)){rejected++;continue;}
+                allMask|=mask;
+                if(text.length()>80 || n.box.width()==0 || n.box.height()==0 || !scene.screen.contains(n.box)
+                    || n.box.height()>scene.screen.height()/5 || n.box.width()>scene.screen.width()){oversized++;continue;}
+                if(mask==7)candidates.add(anchor(normalize(raw))?n:
+                    new Node(n.id,n.parent,"구경 1원 받아요",n.box,n.clickable,n.enabled,n.source,"",n.resourceId));
+                else pieces.add(new AnchorPiece(n,text,mask));
+            }
         }
-        result.removeAll(parents);
-        return result;
+        if(pieces.size()>128 || candidates.size()>128)return new AnchorEvidence(null,candidates.size(),"candidate_limit");
+        Set<Node> parents=new HashSet<>();
+        for(AnchorPiece a:pieces)for(AnchorPiece b:pieces) {
+            if((a.mask|b.mask)==a.mask || (a.mask|b.mask)==b.mask || !anchorNear(a,b))continue;
+            int mask=a.mask|b.mask;
+            if(mask==7)addAnchor(scene,candidates,parents,byId,List.of(a,b));
+            else for(AnchorPiece c:pieces)if((mask|c.mask)==7 && anchorNear(b,c))
+                addAnchor(scene,candidates,parents,byId,List.of(a,b,c));
+            if(candidates.size()>256)return new AnchorEvidence(null,candidates.size(),"candidate_limit");
+        }
+        candidates.removeAll(parents);hierarchy.addAll(candidates);
+        Node selected=unique(hierarchy,Semantic::anchor);
+        String reason=selected!=null?"none":!candidates.isEmpty()?"ambiguous_distinct_targets":
+            allMask==7?"spatial_or_context_rejected":rejected>0?"excluded_event":oversized>0?"region_too_large":
+            (allMask&1)==0?"browse_missing":(allMask&2)==0?"one_won_missing":"receive_missing";
+        return new AnchorEvidence(selected,candidates.size(),reason);
     }
-    private static boolean anchorNext(Node a,Node b) {
-        if(a==b || !a.source.equals(b.source) || a.box.overlaps(b.box))return false;
-        Box x=a.box,y=b.box;int h=Math.min(x.height(),y.height());
-        if(h<=0 || Math.max(x.height(),y.height())>h*2)return false;
+    private static boolean anchorNear(AnchorPiece a,AnchorPiece b) {
+        if(a.node.id==b.node.id)return false;
+        Box x=a.node.box,y=b.node.box;int h=Math.min(x.height(),y.height());
+        if(h<=0 || Math.max(x.height(),y.height())>h*2.5)return false;
         int vertical=Math.min(x.bottom,y.bottom)-Math.max(x.top,y.top);
-        boolean row=y.left>=x.right && y.left-x.right<=h*2 && vertical>=h*.6;
+        boolean mixed=!a.node.source.equals(b.node.source);
+        // Overlapping cross-source boxes may denote complementary observations of the same row.
+        boolean sameRow=mixed && samePosition(x,y) && vertical>=h*.6;
+        boolean row=y.cx()>x.cx() && y.left>=x.right-h/3 && y.left-x.right<=h*(mixed?1.5:2) && vertical>=h*.6;
         int horizontal=Math.min(x.right,y.right)-Math.max(x.left,y.left);
-        boolean line=y.top>=x.bottom && y.top-x.bottom<=h && horizontal>=Math.min(x.width(),y.width())*.5;
-        return row || line;
+        boolean line=y.top>=x.bottom-h/5 && y.top-x.bottom<=h && horizontal>=Math.min(x.width(),y.width())*.5;
+        return sameRow || row || line;
     }
-    private static boolean compactAnchor(Node a,Node b,Node c) {
-        Box box=a.box.union(b.box).union(c.box);
-        int h=Math.min(a.box.height(),Math.min(b.box.height(),c.box.height()));
-        return !a.box.overlaps(c.box) && box.height()<=h*5
-            && box.width()<=a.box.width()+b.box.width()+c.box.width()+h*4;
-    }
-    private static void addAnchor(List<Node> result,Set<Node> parents,List<Node> original,Map<Integer,Node> byId,List<Node> parts) {
-        String text=parts.stream().map(Semantic::label).reduce("",(a,b)->a+" "+b);
-        if(!anchor(normalize(text)))return;
-        Box box=parts.get(0).box;for(Node n:parts)box=box.union(n.box);
-        result.add(new Node(-1,-1,text,box,false,true,parts.get(0).source));
-        // Only proven native ancestors may be replaced by their reconstructed child label.
-        for(Node n:original)if((anchor(normalize(n.text)) || anchor(normalize(n.description)))
-            && parts.stream().allMatch(child->isAncestor(n,child,byId)))parents.add(n);
+    private static void addAnchor(Scene scene,List<Node> candidates,Set<Node> parents,Map<Integer,Node> byId,List<AnchorPiece> parts) {
+        Box box=parts.get(0).node.box;int h=Integer.MAX_VALUE;String source=parts.get(0).node.source;
+        for(AnchorPiece p:parts){box=box.union(p.node.box);h=Math.min(h,p.node.box.height());if(!source.equals(p.node.source))source="Accessibility+OCR";}
+        if(box.height()>Math.min(h*5,scene.screen.height()/5) || box.width()>Math.min(h*24,scene.screen.width()))return;
+        // Do not skip over an intervening opt-in/event label to assemble unrelated words.
+        for(Node n:scene.nodes)if(n.enabled && box.contains(n.box)
+            && (anchorExcluded(anchorText(n.text)) || anchorExcluded(anchorText(n.description))))return;
+        candidates.add(new Node(-1,-1,"구경 1원 받아요",box,false,true,source));
+        for(Node n:scene.nodes)if((anchor(normalize(n.text)) || anchor(normalize(n.description)))
+            && parts.stream().allMatch(child->isAncestor(n,child.node,byId)))parents.add(n);
     }
     static boolean waiting(String s) { return s.contains("3초") && s.contains("구경"); }
     static boolean complete(String s) { return s.contains("1원") && s.contains("받았"); }
     public static Found inspect(Scene scene) {
         List<Node> blocks=blocks(scene.nodes);
-        Node points=unique(pointsNodes(blocks),Semantic::points),anchor=unique(anchorBlocks(scene.nodes),Semantic::anchor);
+        Node points=unique(pointsNodes(blocks),Semantic::points),anchor=anchorEvidence(scene).node();
         Node waiting=unique(blocks,Semantic::waiting),complete=unique(blocks,Semantic::complete);
         // Any waiting observation vetoes completion, even when waiting itself is ambiguous.
         if(waiting==null) waiting=blocks.stream().filter(n->n.enabled && (waiting(normalize(n.text)) || waiting(normalize(n.description)))).findFirst().orElse(null);
@@ -208,7 +245,7 @@ public final class Semantic {
         List<Node> blocks=blocks(scene.nodes);
         StringBuilder out=new StringBuilder(found.summary());
         explain(out,"points",found.points,pointsNodes(blocks),Semantic::points);
-        explain(out,"anchor",found.anchor,anchorBlocks(scene.nodes),Semantic::anchor);
+        out.append("\n").append(anchorEvidence(scene).summary());
         out.append("\nad=").append(describe(found.ad));
         if(found.ad!=null)out.append(detail(found.ad));
         else if(found.anchor==null)out.append(" reason=anchor_missing_or_ambiguous");

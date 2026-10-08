@@ -11,9 +11,12 @@ final class StopSummary {
         return key+"="+(match.find()?match.group(1):"not observed");
     }
     static String format(String version,Engine e,String ocr,String transition) {
+        return format(version,e,ocr,transition,"");
+    }
+    static String format(String version,Engine e,String ocr,String transition,String anchor) {
         return "버전 / commit: "+line(version)+"\nstate="+e.state+"\ncycle="+e.cycleId+" / completed="+e.completed
             +"\npause reason: "+line(e.reason)+"\nlastSuccess: "+line(e.lastSuccess)+"\nlastAction: "+line(e.lastAction)
             +"\n"+evidence(e.lastSemanticResult,"points")+"\n"+evidence(e.lastSemanticResult,"anchor")+"\n"+evidence(e.lastSemanticResult,"ad")
-            +"\n마지막 OCR: "+line(ocr)+"\n마지막 전환: "+line(transition);
+            +"\n마지막 OCR: "+line(ocr)+"\n마지막 전환: "+line(transition)+(anchor.isEmpty()?"":"\n"+line(anchor));
     }
 }
