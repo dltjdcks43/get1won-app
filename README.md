@@ -1,6 +1,6 @@
-# 1원 받기 3.0-beta11
+# 1원 받기 3.0-beta12
 
-Android 14/API 34 이상. `v3-universal` 실험 브랜치이며 main/v2.2에 병합하지 않습니다. versionCode 19. 앱 이름과 제작자 표시, 반복 설정, 조작창 디자인은 유지합니다.
+Android 14/API 34 이상. `v3-universal` 실험 브랜치이며 main/v2.2에 병합하지 않습니다. versionCode 20. 앱 이름과 제작자 표시, 반복 설정, 조작창 디자인은 유지합니다.
 
 ## 사용
 
@@ -88,3 +88,7 @@ native 내 포인트 label이 없는 경우에만 OCR 위치 근처의 native �
 ## beta11 구조 fallback 진입 조건
 
 OCR 위치와 무관한 native 후보 거부·중복·위치 불일치가 구조 검증 전체를 차단하지 않도록 수정했습니다. 같은 위치의 실제 native 대상 중복/프로모션은 차단하고, 글자 바로 아래의 잔액+출금 native subtree도 제한된 간격·가로 겹침으로 검증합니다. 실패 요약에 native 이유와 구조 검증 결과를 같은 줄에 표시합니다. [beta11 변경 및 검증](docs/V3-BETA11-REGRESSION.md).
+
+## beta12 POINTS 입력
+
+검증된 native 대상에 우선 ACTION_CLICK합니다. 대상이 없거나 클릭 후 화면이 그대로이면 새 screenshot/OCR로 상단의 정확한 내 포인트 한 곳과 HOME anchor/ad를 다시 확인해 글자 중앙을 직접 터치합니다. 별개 OCR 후보·가까운 프로모션·오래된 frame/window는 거부합니다. cycle당 OCR gesture는 최대 2회이며 매번 새 OCR을 사용합니다. 클릭 callback은 성공 판정이 아니고 실제 history 확인을 유지합니다. [beta8/beta11 비교 및 beta12 검증](docs/V3-BETA12-REGRESSION.md).

@@ -22,6 +22,7 @@ public final class AutomationService extends AccessibilityService {
     private OcrTicket pending;
     private WindowOcr ocr;
     private final Set<String> pointsIds=new HashSet<>();
+    private final PointsInput pointsInput=new PointsInput();
     private record Snapshot(Semantic.Scene scene,Map<Integer,AccessibilityNodeInfo> handles,int window,String pkg,int count,boolean partial) implements AutoCloseable {
         @SuppressWarnings("deprecation") public void close() { for(AccessibilityNodeInfo n:handles.values())n.recycle(); }
     }
@@ -184,9 +185,11 @@ public final class AutomationService extends AccessibilityService {
             Diagnostics.pointsClick(resolved.selectedSummary(decision.target()),resolved.targetSummary());
             AppState.log(resolved.selectedSummary(decision.target())+" / "+resolved.targetSummary());
             Semantic.Node target=resolved.target();
-            if(target==null) {
-                Diagnostics.pointsClickFailed();engine.pause("내 포인트 클릭 대상을 안전하게 확인하지 못했어요.");return;
+            if(target==null || !pointsInput.preferNative(engine.cycleId)) {
+                requestPointsOcr(fresh,decision);return;
             }
+            Diagnostics.pointsClick("POINTS mode=native",resolved.targetSummary());
+            AppState.log("POINTS mode=native");
             if(movePanelAway(target.box())){engine.defer(decision);return;}
             try(WindowIdentity live=window()) {
                 if(live==null){engine.defer(decision);return;}
@@ -195,11 +198,81 @@ public final class AutomationService extends AccessibilityService {
                 }
             }
             AccessibilityNodeInfo handle=fresh.handles.get(target.id());
-            // POINTS never falls back to an unverified coordinate. Each bounded retry resolves
-            // a fresh native handle; accepted still requires the existing history transition.
+            pointsInput.nativeAttempted(engine.cycleId);
             boolean accepted=handle!=null && handle.performAction(AccessibilityNodeInfo.ACTION_CLICK);
             engine.submitted(decision,accepted,SystemClock.uptimeMillis());
+            // A failed submission or unchanged page can request fresh OCR on the existing retry.
+            // Native bounds are never passed to the gesture path.
         }
+    }
+    private void pointsRejected(String reason) {
+        String line="POINTS fallback rejected reason="+reason;
+        AppState.log(line);Diagnostics.pointsClick(line,"");Diagnostics.pointsClickFailed();
+        engine.pause("내 포인트 직접 터치 조건을 확인하지 못했어요.");
+    }
+    private void requestPointsOcr(Snapshot fresh,Engine.Decision decision) {
+        if(!pointsInput.canGesture(engine.cycleId)){pointsRejected("gesture_limit_2");return;}
+        if(ocr==null || WindowOcr.preparationFailed){pointsRejected("ocr_unavailable");return;}
+        if(ocr.busy() || !WindowOcr.ready){engine.defer(decision);schedule(250);return;}
+        long now=SystemClock.uptimeMillis();
+        // This is always a NEW screenshot request after the POINTS decision. Never reuse
+        // decision.target bounds or the OCR result which produced that decision.
+        OcrTicket t=new OcrTicket(++ocrSequence,engine.generation,engine.cycleId,engine.state,engine.actionEpoch,
+            fresh.window,fresh.pkg,now,"",fresh.scene.screen(),panelBox());
+        pending=t;lastOcrRequest=now;Diagnostics.ocr("POINTS fresh 요청 ticket="+t.id());
+        if(!ocr.request(t,new WindowOcr.Result(){
+            public void success(OcrTicket ticket,List<Semantic.Node> nodes,long time){acceptPointsOcr(decision,ticket,nodes,time);}
+            public void failure(OcrTicket ticket,String stage){
+                if(!valid(ticket) || !engine.current(decision))return;
+                pending=null;pointsRejected("fresh_ocr_failed");Diagnostics.record(engine);updatePanel();
+            }
+        })) {pending=null;engine.defer(decision);schedule(250);}
+    }
+    private void acceptPointsOcr(Engine.Decision decision,OcrTicket ticket,List<Semantic.Node> nodes,long time) {
+        if(!valid(ticket) || !engine.current(decision))return;
+        pending=null;
+        try(Snapshot fresh=snapshot()) {
+            if(fresh==null){pointsRejected("window_unavailable");return;}
+            if(!guard(fresh) || !engine.current(decision))return;
+            var found=observations.merge(ticket,fresh.scene,nodes,fresh.pkg,fresh.window,time,SystemClock.uptimeMillis());
+            if(found==null){pointsRejected("stale_ocr_or_window");return;}
+            var merged=Semantic.mergeOcr(fresh.scene,nodes);
+            // The earlier input may finish while fresh OCR is in flight. Let the existing
+            // history transition win rather than reporting a fallback eligibility failure.
+            if(engine.state==Engine.State.POINTS_ENTRY && found.history() && !found.home()) {
+                engine.defer(decision);
+                evaluate(new Snapshot(merged,fresh.handles,fresh.window,fresh.pkg,fresh.count,fresh.partial),found);return;
+            }
+            var check=PointsInput.check(engine,ticket,nodes,merged,fresh.pkg,fresh.window,time,SystemClock.uptimeMillis());
+            Diagnostics.ocr("POINTS fresh 성공 ticket="+ticket.id());
+            if(!check.allowed()){pointsRejected(check.reason());return;}
+            if(!pointsInput.canGesture(engine.cycleId)){pointsRejected("gesture_limit_2");return;}
+            if(movePanelAway(check.box())){engine.defer(decision);return;}
+            try(WindowIdentity live=window()) {
+                if(live==null || live.id!=ticket.window() || !live.pkg.equals(ticket.pkg()) || !live.bounds.equals(ticket.region())
+                    || !ticket.matches(live.id,live.pkg,"",time,SystemClock.uptimeMillis())) {
+                    pointsRejected("stale_ocr_or_window");return;
+                }
+            }
+            int attempt=pointsInput.gestureAttempted(engine.cycleId);
+            String mode="POINTS mode=ocr_gesture attempt="+attempt;
+            String bounds="POINTS bounds="+check.box();
+            Diagnostics.pointsClick(mode,bounds);AppState.log(mode+" "+bounds);
+            Semantic.Box b=check.box();Path path=new Path();path.moveTo(b.cx(),b.cy());
+            boolean accepted=dispatchGesture(new GestureDescription.Builder().addStroke(new GestureDescription.StrokeDescription(path,0,80)).build(),new GestureResultCallback(){
+                @Override public void onCompleted(GestureDescription g){result(true);}
+                @Override public void onCancelled(GestureDescription g){result(false);}
+                private void result(boolean completed){
+                    if(!engine.current(decision) || closed || !session)return;
+                    try(WindowIdentity live=window()) {
+                        if(live==null || !observations.window(live.pkg,live.id) || !engine.current(decision))return;
+                    }
+                    engine.gestureResult(decision,completed,SystemClock.uptimeMillis());schedule(0);
+                }
+            },main);
+            engine.gestureSubmitted(decision,accepted,SystemClock.uptimeMillis());
+        } catch(RuntimeException e){Diagnostics.error(e);pointsRejected("dispatch_error");}
+        finally {Diagnostics.record(engine);updatePanel();if(engine.active())schedule(250);}
     }
     private record WindowIdentity(int id,String pkg,Semantic.Box bounds,AccessibilityNodeInfo root) implements AutoCloseable {
         @SuppressWarnings("deprecation") public void close(){root.recycle();}
