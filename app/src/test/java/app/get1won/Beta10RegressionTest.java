@@ -68,9 +68,9 @@ public class Beta10RegressionTest {
         assertNull(PointsTarget.resolve(s,old).target());
         assertEquals("no_native_label",PointsTarget.resolve(s,n(100,-1,"내 포인트",200,60,false)).context());
     }
-    @Test public void ambiguousNativeLabelsDoNotEnableOcrFallback() {
+    @Test public void nearbyDistinctNativeTargetsDoNotEnableOcrFallback() {
         var s=scene(n(10,-1,"",180,160,true),balance(10,"123원"),withdrawal(10),
-            n(30,-1,"내 포인트",200,60,false),n(31,-1,"내 포인트",1500,60,false));
+            n(30,-1,"내 포인트",200,60,true),n(31,-1,"내 포인트",200,60,true));
         assertNull(PointsTarget.resolve(s,ocr()).target());
     }
     @Test public void structuralTargetCanBeSubmittedButStillNeedsHistory() {

@@ -1,6 +1,6 @@
-# 1원 받기 3.0-beta10
+# 1원 받기 3.0-beta11
 
-Android 14/API 34 이상. `v3-universal` 실험 브랜치이며 main/v2.2에 병합하지 않습니다. versionCode 18. 앱 이름과 제작자 표시, 반복 설정, 조작창 디자인은 유지합니다.
+Android 14/API 34 이상. `v3-universal` 실험 브랜치이며 main/v2.2에 병합하지 않습니다. versionCode 19. 앱 이름과 제작자 표시, 반복 설정, 조작창 디자인은 유지합니다.
 
 ## 사용
 
@@ -84,3 +84,7 @@ POINTS 직전에 새 Accessibility snapshot에서 실제 label과 부모를 다�
 ## beta10 OCR points 구조 연결
 
 native 내 포인트 label이 없는 경우에만 OCR 위치 근처의 native 잔액+출금 하위 구조를 확인합니다. 해당 구조를 실제로 소유하는 가장 좁은 클릭 container 하나만 허용하며, 별개 후보 중복/프로모션/누락 구조는 거부합니다. OCR 좌표 gesture는 사용하지 않습니다. [beta10 변경 및 검증](docs/V3-BETA10-REGRESSION.md).
+
+## beta11 구조 fallback 진입 조건
+
+OCR 위치와 무관한 native 후보 거부·중복·위치 불일치가 구조 검증 전체를 차단하지 않도록 수정했습니다. 같은 위치의 실제 native 대상 중복/프로모션은 차단하고, 글자 바로 아래의 잔액+출금 native subtree도 제한된 간격·가로 겹침으로 검증합니다. 실패 요약에 native 이유와 구조 검증 결과를 같은 줄에 표시합니다. [beta11 변경 및 검증](docs/V3-BETA11-REGRESSION.md).

@@ -4,9 +4,11 @@ import java.util.*;
 
 /** POINTS-only native resolution. Geometry associates evidence, never invents a parent. */
 final class PointsTarget {
-    record Result(Semantic.Node target,String context) {
+    record Result(Semantic.Node target,String context,String nativeReason,String structure) {
+        Result(Semantic.Node target,String context){this(target,context,"none","not_attempted");}
+        Result diagnosed(String reason,String outcome){return new Result(target,context,reason,outcome);}
         String selectedSummary(Semantic.Node selected) {
-            return "POINTS selected source="+(selected==null?"none":selected.id()<0?"synthetic":selected.source());
+            return "POINTS selected source="+(selected==null?"none":selected.id()<0?"synthetic":selected.source())+" native="+nativeReason+" structure="+structure;
         }
         String targetSummary() {
             return "POINTS target "+(target==null?"source=none":"source="+target.source()+" bounds="+target.box()+" clickable="+target.clickable())+" context="+context;
@@ -43,6 +45,15 @@ final class PointsTarget {
             if(child.id()==target.id())return true;
         return false;
     }
+    private static boolean localSection(Semantic.Box region,Semantic.Box label) {
+        if(region.contains(label))return true;
+        int overlap=Math.min(region.right(),label.right())-Math.max(region.left(),label.left());
+        int h=label.height();
+        // A balance/withdrawal click row may begin below the OCR heading. Geometry
+        // only admits a candidate; both native descendants are still mandatory.
+        return h>0 && overlap>=label.width()*.8 && region.top()>=label.top()-h/2
+            && region.top()<=label.bottom()+h && region.bottom()<=label.bottom()+h*3;
+    }
     private static Result structure(Semantic.Scene fresh,Semantic.Node evidence,Map<Integer,Semantic.Node> nodes) {
         if(!evidence.source().contains("OCR") || !Semantic.normalize(Semantic.label(evidence)).equals("내포인트"))
             return new Result(null,"no_native_label");
@@ -51,7 +62,7 @@ final class PointsTarget {
         List<Semantic.Node> candidates=new ArrayList<>();boolean promotion=false;
         for(var region:nodes.values()) {
             if(!region.enabled() || !region.clickable() || !fresh.screen().contains(region.box())
-                || !region.box().contains(box) || region.box().height()>box.height()*6
+                || !localSection(region.box(),box) || region.box().height()>box.height()*6
                 || region.box().height()>fresh.screen().height()/4)continue;
             boolean balance=false,withdrawal=false,bad=excluded(region);
             for(var child:nodes.values())if(child.enabled() && inSubtree(child,region,nodes)) {
@@ -73,20 +84,56 @@ final class PointsTarget {
         if(candidates.isEmpty())return new Result(null,promotion?"promotion_rejected":"no_points_structure");
         return new Result(candidates.get(0),"points_structure");
     }
+    private static boolean mentionsPoints(Semantic.Node n) {
+        return Semantic.normalize(n.text()+" "+n.description()).contains("내포인트");
+    }
     static Result resolve(Semantic.Scene fresh,Semantic.Node evidence) {
-        if(evidence==null)return new Result(null,"unknown");
+        if(evidence==null)return new Result(null,"unknown").diagnosed("label_missing","not_attempted");
         var nativeNodes=fresh.nodes().stream().filter(n->n.id()>=0 && n.source().equals("Accessibility")).toList();
-        // Re-run the existing points semantics using only fresh native observations. In
-        // particular an old OCR/synthetic id can never be mistaken for a current handle.
         var points=Semantic.pointsEvidence(new Semantic.Scene(nativeNodes,fresh.screen()));
-        var label=points.node();
         Map<Integer,Semantic.Node> nodes=new HashMap<>();for(var n:nativeNodes)nodes.put(n.id(),n);
-        if(label==null) {
-            // Missing labels alone permit structural fallback; ambiguous/rejected native labels do not.
-            if(!points.reason().equals("label_missing"))return new Result(null,"no_native_label");
-            return structure(fresh,evidence,nodes);
+        String reason=points.reason();
+        if(points.node()!=null && !Semantic.samePosition(points.node().box(),evidence.box()))reason="position_mismatch";
+        boolean ocr=evidence.source().contains("OCR") && Semantic.normalize(Semantic.label(evidence)).equals("내포인트");
+        if(!ocr) {
+            if(points.node()==null || reason.equals("position_mismatch"))return new Result(null,"no_native_label").diagnosed(reason,"not_attempted");
+            return nativeTarget(fresh,points.node(),nativeNodes,nodes).diagnosed(reason,"not_attempted");
         }
-        if(!Semantic.samePosition(label.box(),evidence.box()))return new Result(null,"no_native_label");
+        // Remote/rejected labels are not a veto on an independently proven OCR section.
+        // Preserve the full native tree for actual ancestry and local promotion checks.
+        var nearby=nativeNodes.stream().filter(n->n.enabled() && mentionsPoints(n)
+            && Semantic.samePosition(n.box(),evidence.box())).toList();
+        List<Semantic.Node> targets=new ArrayList<>();
+        // Keep native split-label support; the synthetic observation is only evidence
+        // for its real shared parent, never a dispatch handle.
+        if(points.node()!=null && points.node().id()<0 && Semantic.samePosition(points.node().box(),evidence.box())) {
+            var result=nativeTarget(fresh,points.node(),nativeNodes,nodes);
+            if(result.context().equals("promotion_rejected"))return result.diagnosed("context_rejected","not_attempted");
+            if(result.target()!=null)targets.add(result.target());
+        }
+        for(var n:nearby) {
+            if(unsafe(n,n,nodes))return new Result(null,"promotion_rejected").diagnosed("context_rejected","not_attempted");
+            if(!Semantic.points(Semantic.normalize(Semantic.label(n))))continue;
+            var result=nativeTarget(fresh,n,nativeNodes,nodes);
+            if(result.context().equals("promotion_rejected"))return result.diagnosed("context_rejected","not_attempted");
+            if(result.target()!=null)targets.add(result.target());
+        }
+        // Collapse true ancestry and duplicate query handles, not equal-geometry sibling targets.
+        var all=List.copyOf(targets);
+        targets.removeIf(a->all.stream().anyMatch(b->a.id()!=b.id() && inSubtree(b,a,nodes)));
+        List<Semantic.Node> distinct=new ArrayList<>();
+        for(var n:targets)if(distinct.stream().noneMatch(a->sameNativeTarget(a,n)))distinct.add(n);
+        if(distinct.size()>1)return new Result(null,"ambiguous_points_regions").diagnosed("ambiguous_distinct_targets","not_attempted");
+        if(distinct.size()==1)return new Result(distinct.get(0),"points").diagnosed(reason,"not_attempted");
+        if(reason.equals("none"))reason="no_usable_target";
+        var result=structure(fresh,evidence,nodes);
+        return result.diagnosed(reason,result.context());
+    }
+    private static boolean sameNativeTarget(Semantic.Node a,Semantic.Node b) {
+        return a.id()==b.id() || ((a.id()>=100000) != (b.id()>=100000)) && a.box().equals(b.box())
+            && a.text().equals(b.text()) && a.description().equals(b.description()) && a.resourceId().equals(b.resourceId());
+    }
+    private static Result nativeTarget(Semantic.Scene fresh,Semantic.Node label,List<Semantic.Node> nativeNodes,Map<Integer,Semantic.Node> nodes) {
         // Prefer a tree-connected copy over the same native label returned by priority lookup.
         if(label.id()>=0 && label.parent()<0) {
             var original=label;

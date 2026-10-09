@@ -56,7 +56,8 @@ public class Beta9RegressionTest {
         assertNull(PointsTarget.resolve(SemanticTest.scene(clickable,promo),ocr()).target());
     }
     @Test public void distantDuplicateAndStaleEvidenceNeverResolve() {
-        assertNull(PointsTarget.resolve(scene(n(8,-1,"내 포인트",40,1500,210,60,true,"Accessibility")),ocr()).target());
+        // Native-only ambiguity stays conservative; OCR-local resolution is covered by beta11.
+        assertNull(PointsTarget.resolve(scene(n(8,-1,"내 포인트",40,1500,210,60,true,"Accessibility")),label()).target());
         assertNull(PointsTarget.resolve(scene(),n(80,-1,"내 포인트",40,1500,210,60,false,"OCR")).target());
     }
     @Test public void priorityAncestorCopiesRetainTreeLocalContext() {
