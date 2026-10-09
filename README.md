@@ -1,6 +1,6 @@
-# 1원 받기 3.0-beta9
+# 1원 받기 3.0-beta10
 
-Android 14/API 34 이상. `v3-universal` 실험 브랜치이며 main/v2.2에 병합하지 않습니다. versionCode 17. 앱 이름과 제작자 표시, 반복 설정, 조작창 디자인은 유지합니다.
+Android 14/API 34 이상. `v3-universal` 실험 브랜치이며 main/v2.2에 병합하지 않습니다. versionCode 18. 앱 이름과 제작자 표시, 반복 설정, 조작창 디자인은 유지합니다.
 
 ## 사용
 
@@ -80,3 +80,7 @@ points의 명확한 text를 무관한 description으로 거부하지 않도록 l
 ## beta9 POINTS 클릭 대상 검증
 
 POINTS 직전에 새 Accessibility snapshot에서 실제 label과 부모를 다시 찾습니다. OCR/분리 문구는 근거로만 사용하며 bounds 포함만으로 무관한 클릭 영역을 고르지 않습니다. 클릭 대상 내부의 알림/이벤트 문맥은 제외하고, native 대상이 없으면 좌표 클릭 대신 중단합니다. 실패 요약에 대상 source/bounds/context 두 줄을 추가합니다. 요청 수락 후 실제 내역 화면이 보여야 성공이며 새로운 자동 BACK 복구는 추가하지 않았습니다. [변경 및 검증 기록](docs/V3-BETA9-REGRESSION.md).
+
+## beta10 OCR points 구조 연결
+
+native 내 포인트 label이 없는 경우에만 OCR 위치 근처의 native 잔액+출금 하위 구조를 확인합니다. 해당 구조를 실제로 소유하는 가장 좁은 클릭 container 하나만 허용하며, 별개 후보 중복/프로모션/누락 구조는 거부합니다. OCR 좌표 gesture는 사용하지 않습니다. [beta10 변경 및 검증](docs/V3-BETA10-REGRESSION.md).
