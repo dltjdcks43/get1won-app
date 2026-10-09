@@ -1,6 +1,6 @@
-# 1원 받기 3.0-beta8
+# 1원 받기 3.0-beta9
 
-Android 14/API 34 이상. `v3-universal` 실험 브랜치이며 main/v2.2에 병합하지 않습니다. versionCode 16. 앱 이름과 제작자 표시, 반복 설정, 조작창 디자인은 유지합니다.
+Android 14/API 34 이상. `v3-universal` 실험 브랜치이며 main/v2.2에 병합하지 않습니다. versionCode 17. 앱 이름과 제작자 표시, 반복 설정, 조작창 디자인은 유지합니다.
 
 ## 사용
 
@@ -76,3 +76,7 @@ beta4의 단어 목록과 동일 출처 제한을 대체했습니다. 현재 장
 ## beta8 selector와 같은 행 중복
 
 points의 명확한 text를 무관한 description으로 거부하지 않도록 label 우선순위를 일치시켰습니다. anchor만 같은 문구의 Accessibility 전체 행/OCR 글자 bounds 중복을 제한적으로 허용합니다. 다른 target을 큰 행 하나로 연결하지 않도록 모든 후보 쌍의 일치를 계속 요구합니다. [beta8 기록](docs/V3-BETA8-REGRESSION.md).
+
+## beta9 POINTS 클릭 대상 검증
+
+POINTS 직전에 새 Accessibility snapshot에서 실제 label과 부모를 다시 찾습니다. OCR/분리 문구는 근거로만 사용하며 bounds 포함만으로 무관한 클릭 영역을 고르지 않습니다. 클릭 대상 내부의 알림/이벤트 문맥은 제외하고, native 대상이 없으면 좌표 클릭 대신 중단합니다. 실패 요약에 대상 source/bounds/context 두 줄을 추가합니다. 요청 수락 후 실제 내역 화면이 보여야 성공이며 새로운 자동 BACK 복구는 추가하지 않았습니다. [변경 및 검증 기록](docs/V3-BETA9-REGRESSION.md).

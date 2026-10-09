@@ -12,10 +12,13 @@ final class Diagnostics {
     private static String version="",lastOcr="없음",transition="없음",stopSummary="",anchorStatus="",pointsStatus="";
     private static Engine.State observedState=Engine.State.IDLE;
     private static long pauseGeneration=-1;
+    private static String pointsSelected="",pointsTarget="";private static boolean pointsClickFailure;
+    static synchronized void pointsClick(String selected,String target){pointsSelected=selected;pointsTarget=target;}
+    static synchronized void pointsClickFailed(){pointsClickFailure=true;}
     static synchronized void points(String status){pointsStatus=status;}
     static synchronized void anchor(String status){anchorStatus=status;}
     static synchronized void ocr(String status){lastOcr=status;}
-    static synchronized void newSession(){lastOcr="이번 실행에서 요청 없음";transition="없음";anchorStatus="";pointsStatus="";observedState=Engine.State.IDLE;}
+    static synchronized void newSession(){pointsSelected=pointsTarget="";pointsClickFailure=false;lastOcr="이번 실행에서 요청 없음";transition="없음";anchorStatus="";pointsStatus="";observedState=Engine.State.IDLE;}
     static synchronized void install(Context context) {
         if(directory!=null)return;version=AppVersion.read(context).footer();directory=context.getFilesDir();HandlerThread thread=new HandlerThread("LocalDiagnostics");thread.start();disk=new Handler(thread.getLooper());
         Thread.UncaughtExceptionHandler previous=Thread.getDefaultUncaughtExceptionHandler();
@@ -28,9 +31,10 @@ final class Diagnostics {
     static synchronized void record(Engine e) {
         if(e.state!=observedState && e.state!=Engine.State.PAUSED && e.state!=Engine.State.IDLE)
             transition=observedState+" -> "+e.state+" / cycle="+e.cycleId;
+        boolean pointsFailure=e.state==Engine.State.PAUSED && (observedState==Engine.State.POINTS_ENTRY || pointsClickFailure);
         observedState=e.state;
         if(e.state==Engine.State.PAUSED && pauseGeneration!=e.generation) {
-            pauseGeneration=e.generation;stopSummary=StopSummary.format(version,e,lastOcr,transition,anchorStatus,pointsStatus);
+            pauseGeneration=e.generation;stopSummary=StopSummary.format(version,e,lastOcr,transition,anchorStatus,pointsStatus,pointsFailure?pointsSelected:"",pointsFailure?pointsTarget:"");
             String report=stopSummary;if(disk!=null)disk.post(()->write("last-stop.txt",report));
         }
         latest="state="+e.state+"\ncycleId="+e.cycleId+"\ncompleted="+e.completed+"\nlastSuccess="+e.lastSuccess+"\nlastAction="+e.lastAction+"\nlastSemanticResult="+e.lastSemanticResult;

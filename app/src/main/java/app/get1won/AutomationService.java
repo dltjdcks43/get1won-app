@@ -138,7 +138,8 @@ public final class AutomationService extends AccessibilityService {
             AppState.log("BACK "+(accepted?"요청 성공 / 실제 복귀 대기":"요청 실패"));
             engine.submitted(decision,accepted,SystemClock.uptimeMillis());return;
         }
-        Semantic.Node node=decision.action()==Engine.Action.AD?decision.target():Semantic.clickParent(s.scene,decision.target());
+        if(decision.action()==Engine.Action.POINTS){clickPoints(s,decision);return;}
+        Semantic.Node node=decision.target();
         if(node==null || node.box().width()==0 || node.box().height()==0 || !s.scene.screen().contains(node.box())) {
             engine.pause("현재 클릭 bounds를 확인하지 못했어요.");return;
         }
@@ -168,6 +169,38 @@ public final class AutomationService extends AccessibilityService {
         AppState.log("gesture target="+decision.action()+" source="+node.source()+" bounds="+b);
         engine.gestureSubmitted(decision,accepted,SystemClock.uptimeMillis());
     }
+    private void clickPoints(Snapshot observed,Engine.Decision decision) {
+        try(Snapshot fresh=snapshot(true)) {
+            if(fresh==null){engine.defer(decision);return;}
+            if(!observed.pkg.equals(fresh.pkg) || observed.window!=fresh.window) {
+                engine.defer(decision);guard(fresh);schedule(0);return;
+            }
+            if(!engine.current(decision))return;
+            Semantic.Found found=Semantic.inspect(fresh.scene);
+            if(found.history() || found.waiting()!=null || found.complete()!=null) {
+                engine.defer(decision);schedule(0);return;
+            }
+            PointsTarget.Result resolved=PointsTarget.resolve(fresh.scene,decision.target());
+            Diagnostics.pointsClick(resolved.selectedSummary(decision.target()),resolved.targetSummary());
+            AppState.log(resolved.selectedSummary(decision.target())+" / "+resolved.targetSummary());
+            Semantic.Node target=resolved.target();
+            if(target==null) {
+                Diagnostics.pointsClickFailed();engine.pause("내 포인트 클릭 대상을 안전하게 확인하지 못했어요.");return;
+            }
+            if(movePanelAway(target.box())){engine.defer(decision);return;}
+            try(WindowIdentity live=window()) {
+                if(live==null){engine.defer(decision);return;}
+                if(!fresh.pkg.equals(live.pkg) || fresh.window!=live.id) {
+                    engine.defer(decision);observations.window(live.pkg,live.id);pending=null;pointsIds.clear();schedule(0);return;
+                }
+            }
+            AccessibilityNodeInfo handle=fresh.handles.get(target.id());
+            // POINTS never falls back to an unverified coordinate. Each bounded retry resolves
+            // a fresh native handle; accepted still requires the existing history transition.
+            boolean accepted=handle!=null && handle.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+            engine.submitted(decision,accepted,SystemClock.uptimeMillis());
+        }
+    }
     private record WindowIdentity(int id,String pkg,Semantic.Box bounds,AccessibilityNodeInfo root) implements AutoCloseable {
         @SuppressWarnings("deprecation") public void close(){root.recycle();}
     }
@@ -186,15 +219,16 @@ public final class AutomationService extends AccessibilityService {
             return new WindowIdentity(chosen.getId(),String.valueOf(root.getPackageName()),box(bounds),root);
         } finally {for(AccessibilityWindowInfo w:windows)w.recycle();}
     }
-    @SuppressWarnings("deprecation") private Snapshot snapshot() {
+    private Snapshot snapshot() { return snapshot(false); }
+    @SuppressWarnings("deprecation") private Snapshot snapshot(boolean pointsClick) {
         try(WindowIdentity w=window()) {
             if(w==null)return null;
             List<Semantic.Node> nodes=new ArrayList<>();Map<Integer,AccessibilityNodeInfo> handles=new HashMap<>();
             try {
                 // Platform text lookup prioritizes points outside the bounded general traversal.
-                int id=collectMatches(w.root.findAccessibilityNodeInfosByText("포인트"),100000,100100,w.bounds,nodes,handles);
+                int id=collectMatches(w.root.findAccessibilityNodeInfosByText("포인트"),100000,100100,w.bounds,nodes,handles,pointsClick);
                 for(String resourceId:new ArrayList<>(pointsIds))
-                    id=collectMatches(w.root.findAccessibilityNodeInfosByViewId(resourceId),id,100200,w.bounds,nodes,handles);
+                    id=collectMatches(w.root.findAccessibilityNodeInfosByViewId(resourceId),id,100200,w.bounds,nodes,handles,pointsClick);
                 TreeWalk.Result result=TreeWalk.collect(AccessibilityNodeInfo.obtain(w.root),new TreeWalk.Access<AccessibilityNodeInfo>(){
                     public int children(AccessibilityNodeInfo n){return n.getChildCount();}
                     public AccessibilityNodeInfo child(AccessibilityNodeInfo n,int i){return n.getChild(i);}
@@ -205,8 +239,22 @@ public final class AutomationService extends AccessibilityService {
             } catch(RuntimeException e){for(AccessibilityNodeInfo n:handles.values())n.recycle();throw e;}
         }
     }
-    @SuppressWarnings("deprecation") private int collectMatches(List<AccessibilityNodeInfo> matches,int id,int limit,Semantic.Box bounds,List<Semantic.Node> nodes,Map<Integer,AccessibilityNodeInfo> handles) {
-        try {for(AccessibilityNodeInfo n:matches)if(id<limit)addNode(n,id++,-1,bounds,nodes,handles);return id;}
+    @SuppressWarnings("deprecation") private int collectMatches(List<AccessibilityNodeInfo> matches,int id,int limit,Semantic.Box bounds,List<Semantic.Node> nodes,Map<Integer,AccessibilityNodeInfo> handles,boolean parents) {
+        try {
+            for(AccessibilityNodeInfo n:matches)if(id<limit) {
+                if(!parents){addNode(n,id++,-1,bounds,nodes,handles);continue;}
+                AccessibilityNodeInfo cursor=AccessibilityNodeInfo.obtain(n);
+                try {
+                    for(int depth=0;cursor!=null && depth<8 && id<limit;depth++) {
+                        AccessibilityNodeInfo parent=depth<7 && id+1<limit?cursor.getParent():null;
+                        try {addNode(cursor,id++,parent==null?-1:id,bounds,nodes,handles);}
+                        catch(RuntimeException e){if(parent!=null)parent.recycle();throw e;}
+                        cursor.recycle();cursor=parent;
+                    }
+                } finally {if(cursor!=null)cursor.recycle();}
+            }
+            return id;
+        }
         finally {for(AccessibilityNodeInfo n:matches)n.recycle();}
     }
     @SuppressWarnings("deprecation") private void addNode(AccessibilityNodeInfo n,int id,int parent,Semantic.Box screen,List<Semantic.Node> nodes,Map<Integer,AccessibilityNodeInfo> handles) {
