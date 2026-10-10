@@ -199,7 +199,7 @@ public final class AutomationService extends AccessibilityService {
             boolean current=session && !closed && engine.current(decision);
             boolean same=live!=null && live.id==observed.window && live.pkg.equals(observed.pkg) && live.bounds.equals(observed.scene.screen());
             if(live!=null && !geometry(live.bounds)){engine.defer(decision);return;}
-            plan=PointsDispatch.plan(target,exact,live==null?observed.scene.screen():live.bounds,displayBounds(),current,same,false);
+            plan=PointsDispatch.plan(target,exact,live==null?observed.scene.screen():live.bounds,displayBounds(),current,same,false,decision.attempt());
             if(plan.mode()==PointsDispatch.Mode.DEFER) {
                 engine.defer(decision);if(current && live!=null)observations.window(live.pkg,live.id);
                 schedule(250);return;
@@ -211,7 +211,7 @@ public final class AutomationService extends AccessibilityService {
                 engine.defer(decision);AppState.log("POINTS overlay moved / normal re-observation");schedule(0);return;
             }
         }
-        String mode="POINTS mode="+(plan.mode()==PointsDispatch.Mode.NATIVE?"native":"target_gesture")+" attempt="+decision.attempt();
+        String mode="POINTS mode="+(plan.mode()==PointsDispatch.Mode.NATIVE?"native":decision.attempt()>1?"gesture_fallback":"target_gesture")+" attempt="+decision.attempt()+" input="+(plan.mode()==PointsDispatch.Mode.NATIVE?"ACTION_CLICK":"GESTURE");
         String bounds="POINTS bounds="+plan.box();
         Diagnostics.pointsClick(mode,bounds);AppState.log(mode+" "+bounds);
         if(plan.mode()==PointsDispatch.Mode.NATIVE) {

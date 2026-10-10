@@ -10,7 +10,7 @@ public class Beta14RegressionTest {
     private static Engine engine(){var e=new Engine(x->{});e.start(0,0);e.state=Engine.State.WAIT_FOR_POINTS;return e;}
     @Test public void fullWindowAllowsOcrAndObservedTargetGesture() {
         assertTrue(WindowGeometry.visible(DISPLAY,DISPLAY));
-        var p=PointsDispatch.plan(point(0),false,DISPLAY,DISPLAY,true,true,false);
+        var p=PointsDispatch.plan(point(0),false,DISPLAY,DISPLAY,true,true,false,1);
         assertEquals(PointsDispatch.Mode.GESTURE,p.mode());assertEquals(171,p.box().cx());
     }
     @Test public void equal1080WidthDoesNotMakeTranslatedWindowUsable() {
@@ -18,12 +18,12 @@ public class Beta14RegressionTest {
         var e=engine();var log=new ArrayList<String>();var gate=new WindowGeometry();
         assertFalse(gate.observe(LEFT,DISPLAY,log::add));assertEquals(1,log.size());
         assertTrue(e.active());assertEquals(Engine.State.WAIT_FOR_POINTS,e.state);
-        assertEquals(PointsDispatch.Mode.DEFER,PointsDispatch.plan(point(-382),false,LEFT,DISPLAY,true,true,false).mode());
+        assertEquals(PointsDispatch.Mode.DEFER,PointsDispatch.plan(point(-382),false,LEFT,DISPLAY,true,true,false,1).mode());
     }
     @Test public void rightTranslationAlsoRequiresReobservation() {
         var right=new Semantic.Box(382,0,1462,2316);assertEquals(1080,right.width());
         assertFalse(WindowGeometry.visible(right,DISPLAY));
-        assertEquals(PointsDispatch.Mode.DEFER,PointsDispatch.plan(point(382),false,right,DISPLAY,true,true,false).mode());
+        assertEquals(PointsDispatch.Mode.DEFER,PointsDispatch.plan(point(382),false,right,DISPLAY,true,true,false,1).mode());
     }
     @Test public void resultArrivingAfterSameIdTranslationIsDiscardedThenStableResultWorks() {
         var e=engine();var gate=new ObservationGate(e,x->{});gate.bind("target",1076);
@@ -37,9 +37,9 @@ public class Beta14RegressionTest {
     }
     @Test public void negativeOcrCoordinatesNeverProduceGesturePlan() {
         var n=point(-382);assertEquals(-301,n.box().left());assertEquals(-121,n.box().right());assertTrue(LEFT.contains(n.box()));
-        var p=PointsDispatch.plan(n,false,LEFT,DISPLAY,true,true,false);
+        var p=PointsDispatch.plan(n,false,LEFT,DISPLAY,true,true,false,1);
         assertEquals(PointsDispatch.Mode.DEFER,p.mode());assertNull(p.box());
-        assertEquals(PointsDispatch.Mode.DEFER,PointsDispatch.plan(n,false,DISPLAY,DISPLAY,true,true,false).mode());
+        assertEquals(PointsDispatch.Mode.DEFER,PointsDispatch.plan(n,false,DISPLAY,DISPLAY,true,true,false,1).mode());
     }
     @Test public void transientThenStableAt250msResumesExistingPointsHistoryPath() {
         var e=engine();var geometry=new WindowGeometry();
@@ -47,7 +47,7 @@ public class Beta14RegressionTest {
         assertTrue(geometry.observe(DISPLAY,DISPLAY,x->{}));
         var found=Semantic.inspect(new Semantic.Scene(List.of(point(0)),DISPLAY));var d=e.observe(found,250);
         assertEquals(Engine.Action.POINTS,d.action());assertEquals(1,d.attempt());
-        assertEquals(PointsDispatch.Mode.GESTURE,PointsDispatch.plan(d.target(),false,DISPLAY,DISPLAY,e.current(d),true,false).mode());
+        assertEquals(PointsDispatch.Mode.GESTURE,PointsDispatch.plan(d.target(),false,DISPLAY,DISPLAY,e.current(d),true,false,1).mode());
         e.gestureSubmitted(d,true,251);e.gestureResult(d,true,252);assertEquals(0,e.actions[2]);
         assertEquals(Engine.Action.BACK_HISTORY,e.observe(new Semantic.Found(null,null,null,null,null,true),253).action());
         assertEquals(1,e.actions[2]);
@@ -55,7 +55,7 @@ public class Beta14RegressionTest {
     @Test public void nonZeroMultiwindowOriginRemainsValidAndUnmodified() {
         var w=new Semantic.Box(0,500,1080,1800);assertTrue(WindowGeometry.visible(w,DISPLAY));
         var mapped=new Semantic.Node(1,-1,"내 포인트",new Semantic.Box(w.left()+81,w.top()+83,w.left()+261,w.top()+127),false,true,"OCR");
-        var plan=PointsDispatch.plan(mapped,false,w,DISPLAY,true,true,false);
+        var plan=PointsDispatch.plan(mapped,false,w,DISPLAY,true,true,false,1);
         assertEquals(PointsDispatch.Mode.GESTURE,plan.mode());assertEquals(605,plan.box().cy());
         assertTrue(WindowGeometry.visible(new Semantic.Box(100,500,900,1800),DISPLAY));
     }
@@ -76,6 +76,6 @@ public class Beta14RegressionTest {
         assertFalse(WindowGeometry.input(new Semantic.Box(100,2300,300,2400),DISPLAY,DISPLAY));
         assertFalse(WindowGeometry.visible(new Semantic.Box(0,0,0,2316),DISPLAY));
         var nativeNode=new Semantic.Node(1,-1,"내 포인트",point(-382).box(),true,true,"Accessibility");
-        assertEquals(PointsDispatch.Mode.DEFER,PointsDispatch.plan(nativeNode,true,LEFT,DISPLAY,true,true,false).mode());
+        assertEquals(PointsDispatch.Mode.DEFER,PointsDispatch.plan(nativeNode,true,LEFT,DISPLAY,true,true,false,1).mode());
     }
 }
