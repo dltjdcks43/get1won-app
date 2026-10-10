@@ -29,7 +29,7 @@ public final class Semantic {
     private static String describe(Node n) { return n==null?"not found":"found source="+n.source+" bounds="+n.box; }
     // Match the v2.2 adapter: use description only when the text is empty.
     static String label(Node n) { return n.text.isBlank()?n.description:n.text; }
-    static boolean points(String s) { return s.equals("내포인트") || s.matches("내포인트(?:잔액)?[:：]?[0-9,]+(?:[Pp]|원|포인트)?(?:출금)?[›>]?"); }
+    static boolean points(String s) { return s.equals("내포인트") || s.matches("내포인트(?:잔액)?[:：]?[0-9]+(?:,[0-9]{3})*(?:(?:[Pp]|원|포인트)(?:내역보기)?)?(?:출금)?[›>]?"); }
     private static boolean pointsContext(Node n,Map<Integer,Node> byId) {
         // Match the selector: nonblank text is authoritative; description is only a fallback.
         String own=normalize(label(n));
@@ -329,6 +329,10 @@ public final class Semantic {
         StringBuilder out=new StringBuilder(found.summary());
         explain(out,"points",found.points,pointsNodes(pointsBlocks(scene)),Semantic::points);
         out.append("\n").append(pointsEvidence(scene).summary());
+        List<Node> pointCandidates=pointsNodes(pointsBlocks(scene)).stream().filter(n->n.enabled && pointLabel(n)).toList();
+        out.append("\npoints nativeCandidates=").append(pointCandidates.stream().filter(n->n.source.equals("Accessibility")).count())
+            .append(" ocrCandidates=").append(pointCandidates.stream().filter(n->n.source.equals("OCR")).count())
+            .append(" selected=").append(found.points==null?"none":found.points.source);
         out.append("\n").append(anchorEvidence(scene).summary());
         out.append("\nad=").append(describe(found.ad));
         if(found.anchor==null)out.append(" reason=anchor_missing_or_ambiguous");
