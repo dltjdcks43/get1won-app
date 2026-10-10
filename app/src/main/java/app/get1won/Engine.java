@@ -14,6 +14,7 @@ public final class Engine {
     private int limit,attempts,pointsAttempts;
     private long entered,lastTap,lastPointsTap,reserved,gesture,gestureSince;
     private boolean adReobserved;
+    private State homeOverrideLogged;
     private final Consumer<String> log;
     public Engine(Consumer<String> log) { this.log=log; }
     public boolean active() { return state!=State.IDLE && state!=State.PAUSED; }
@@ -28,7 +29,7 @@ public final class Engine {
     public void settingsChanged() { stop(); }
     public void pause(String message) { generation++;reserved=gesture=0;state=State.PAUSED;reason=message;log.accept("일시정지: "+message); }
     public void fail(String message) { pause(message); }
-    private void move(State next,long now) { state=next;entered=now;reason=next.name();log.accept("state="+next+" cycleId="+cycleId+" completed="+completed); }
+    private void move(State next,long now) { homeOverrideLogged=null;state=next;entered=now;reason=next.name();log.accept("state="+next+" cycleId="+cycleId+" completed="+completed); }
     private void success(int index,String message) { actions[index]++;lastSuccess=message;log.accept("화면 전환 확인: "+message); }
     public boolean expired(long now) { return active() && now-entered>=30000; }
     public boolean needsOcr(Semantic.Found f,long now) {
@@ -54,7 +55,16 @@ public final class Engine {
     public boolean current(Decision d) { return d!=null && active() && d.generation==generation && d.cycle==cycleId && d.id==actionEpoch; }
     /** A moved overlay is not an attempted click; re-observe before making a new decision. */
     public void defer(Decision d) { if(current(d) && reserved==d.id) reserved=0; }
-    private static boolean pointsSurface(Semantic.Found f) { return f.points()!=null && !f.history() && f.waiting()==null && f.complete()==null; }
+    private static boolean pointsSurface(Semantic.Found f) {
+        return f.points()!=null && !f.history()
+            && (f.anchor()!=null && f.ad()!=null || f.waiting()==null && f.complete()==null);
+    }
+    private void logHomeOverride(Semantic.Found f) {
+        if((f.waiting()!=null || f.complete()!=null) && homeOverrideLogged!=state) {
+            log.accept(state+" strong_home_override waiting="+(f.waiting()!=null)+" complete="+(f.complete()!=null));
+            homeOverrideLogged=state;
+        }
+    }
     public Decision observe(Semantic.Found f,long now) {
         lastSemanticResult=f.summary();
         if(!active())return null;
@@ -78,7 +88,7 @@ public final class Engine {
             }
             case REWARD -> { if(!f.home() && !f.history() && f.waiting()==null && f.complete()!=null)return decide(Action.BACK_REWARD,null,0); }
             case WAIT_FOR_POINTS -> {
-                if(pointsSurface(f)) { if(actions[1]<actions[0])success(1,"적립 후 복귀 / 내 포인트 발견");return decide(Action.POINTS,f.points(),1); }
+                if(pointsSurface(f)) { logHomeOverride(f);if(actions[1]<actions[0])success(1,"적립 후 복귀 / 내 포인트 발견");return decide(Action.POINTS,f.points(),1); }
             }
             case POINTS_ENTRY -> {
                 if(!f.home() && f.history()) {
@@ -86,12 +96,13 @@ public final class Engine {
                     return decide(Action.BACK_HISTORY,null,0);
                 } else if(pointsSurface(f) && now-lastPointsTap>=1000) {
                     if(pointsAttempts>=2)pause("내 포인트를 열지 못했어요.");
-                    else { log.accept("내 포인트 재탐색 "+(pointsAttempts+1)+"/2");return decide(Action.POINTS,f.points(),pointsAttempts+1); }
+                    else { logHomeOverride(f);log.accept("내 포인트 재탐색 "+(pointsAttempts+1)+"/2");return decide(Action.POINTS,f.points(),pointsAttempts+1); }
                 }
             }
             case HISTORY -> { if(!f.home() && f.history())return decide(Action.BACK_HISTORY,null,0); }
             case HOME_AFTER_HISTORY -> {
                 if(pointsSurface(f)) {
+                    logHomeOverride(f);
                     success(3,"포인트 내역에서 홈 복귀");completed++;cycleId++;actionEpoch++;attempts=pointsAttempts=0;
                     if(limit>0 && completed>=limit) { stop();reason="완료했어요."; }
                     else move(State.HOME,now);
