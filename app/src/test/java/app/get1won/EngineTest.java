@@ -61,12 +61,11 @@ public class EngineTest {
         requestPoints(true);var back=engine.observe(text("전체","방문 적립 +1원","포인트 사용 -2원"),300);
         assertEquals(1,engine.actions[2]);assertEquals(Engine.State.HISTORY,engine.state);assertEquals(Engine.Action.BACK_HISTORY,back.action());
     }
-    @Test public void pointsRetryUsesFreshTargetsAndPausesAfterThree() {
+    @Test public void pointsRetryUsesFreshTargetsAndPausesAfterTwo() {
         requestPoints(true);
         var fresh=Semantic.inspect(SemanticTest.home("한번 더 구경하고 1원 받아요","바뀐 광고"));
         var second=engine.observe(fresh,1200);assertEquals(2,second.attempt());assertSame(fresh.points(),second.target());engine.submitted(second,false,1200);
-        var third=engine.observe(text("내 포인트"),2200);assertEquals(3,third.attempt());engine.submitted(third,true,2200);
-        assertNull(engine.observe(home(),3200));assertEquals(Engine.State.PAUSED,engine.state);
+        assertNull(engine.observe(home(),2200));assertEquals(Engine.State.PAUSED,engine.state);
         assertEquals("내 포인트를 열지 못했어요.",engine.reason);assertEquals(0,engine.actions[2]);
     }
     @Test public void rejectedPointsSubmissionAlsoHasBoundedRetry() {

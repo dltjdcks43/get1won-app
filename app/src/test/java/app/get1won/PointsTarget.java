@@ -1,4 +1,5 @@
 package app.get1won;
+// Historical beta9-12 policy fixture only; not shipped or used by beta13 dispatch.
 
 import java.util.*;
 

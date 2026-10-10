@@ -32,9 +32,13 @@ final class Diagnostics {
         if(e.state!=observedState && e.state!=Engine.State.PAUSED && e.state!=Engine.State.IDLE)
             transition=observedState+" -> "+e.state+" / cycle="+e.cycleId;
         boolean pointsFailure=e.state==Engine.State.PAUSED && (observedState==Engine.State.POINTS_ENTRY || pointsClickFailure);
+        if(observedState==Engine.State.POINTS_ENTRY && e.state!=observedState) {
+            if(e.actions[2]>0 && (e.state==Engine.State.HISTORY || e.state==Engine.State.HOME_AFTER_HISTORY))AppState.log("POINTS transition=history_confirmed");
+            else if(e.state==Engine.State.PAUSED)AppState.log("POINTS transition=not_confirmed");
+        }
         observedState=e.state;
         if(e.state==Engine.State.PAUSED && pauseGeneration!=e.generation) {
-            pauseGeneration=e.generation;stopSummary=StopSummary.format(version,e,lastOcr,transition,anchorStatus,pointsStatus,pointsFailure?pointsSelected:"",pointsFailure?pointsTarget:"");
+            pauseGeneration=e.generation;stopSummary=StopSummary.format(version,e,lastOcr,transition,anchorStatus,pointsStatus,pointsFailure?pointsSelected:"",pointsFailure?pointsTarget+" transition=not_confirmed":"");
             String report=stopSummary;if(disk!=null)disk.post(()->write("last-stop.txt",report));
         }
         latest="state="+e.state+"\ncycleId="+e.cycleId+"\ncompleted="+e.completed+"\nlastSuccess="+e.lastSuccess+"\nlastAction="+e.lastAction+"\nlastSemanticResult="+e.lastSemanticResult;

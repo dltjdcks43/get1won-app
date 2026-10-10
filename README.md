@@ -1,6 +1,14 @@
-# 1원 받기 3.0-beta12
+# 1원 받기 3.0-beta13
 
-Android 14/API 34 이상. `v3-universal` 실험 브랜치이며 main/v2.2에 병합하지 않습니다. versionCode 20. 앱 이름과 제작자 표시, 반복 설정, 조작창 디자인은 유지합니다.
+Android 14/API 34 이상. `v3-universal` 실험 브랜치이며 main/v2.2에 병합하지 않습니다. versionCode 21. 앱 이름과 제작자 표시, 반복 설정, 조작창 디자인은 유지합니다.
+
+## 현재 beta13 POINTS 동작
+
+정상 observation의 exact native clickable handle을 누르거나, OCR/synthetic/non-clickable target 자체 중앙을 직접 터치합니다. POINTS 전용 OCR·native 구조 proof·임의 부모 검색은 없습니다. 일반 관찰 루프의 새 target으로 최대 2회 입력하고 실제 history만 성공으로 인정합니다. 최근 로그 전체 복사/공유와 마지막 중단 요약 복사를 지원합니다.
+
+beta8은 **known-best baseline**이며 stable이 아닙니다. 사용자 실기기 연속 50회(오클릭·조기 pause 없음, 정상 내역 진입) 확인 전 stable 태그/main 병합 금지. [beta13 비교·검증](docs/V3-BETA13-REGRESSION.md) · [개발 원칙](docs/V3-DEVELOPMENT-PRINCIPLES.md).
+
+아래 beta9~12 항목은 이전 버전의 변경 이력이며 현재 dispatch 정책이 아닙니다.
 
 ## 사용
 

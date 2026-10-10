@@ -85,8 +85,8 @@ public final class Engine {
                     success(2,"포인트 내역 실제 진입");move(State.HISTORY,now);
                     return decide(Action.BACK_HISTORY,null,0);
                 } else if(pointsSurface(f) && now-lastPointsTap>=1000) {
-                    if(pointsAttempts>=3)pause("내 포인트를 열지 못했어요.");
-                    else { log.accept("내 포인트 재탐색 "+(pointsAttempts+1)+"/3");return decide(Action.POINTS,f.points(),pointsAttempts+1); }
+                    if(pointsAttempts>=2)pause("내 포인트를 열지 못했어요.");
+                    else { log.accept("내 포인트 재탐색 "+(pointsAttempts+1)+"/2");return decide(Action.POINTS,f.points(),pointsAttempts+1); }
                 }
             }
             case HISTORY -> { if(!f.home() && f.history())return decide(Action.BACK_HISTORY,null,0); }
