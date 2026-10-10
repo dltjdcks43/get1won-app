@@ -281,7 +281,8 @@ public final class Semantic {
     private static Node ad(Scene scene, Node anchor) {
         List<Node> cards=new ArrayList<>();
         for(Node n:scene.nodes) {
-            if(adRejection(scene,anchor,n)==null)cards.add(n);
+            // OCR lines support native cards; they are not independent card targets.
+            if(n.source.equals("Accessibility") && adRejection(scene,anchor,n)==null)cards.add(n);
         }
         cards.sort(Comparator.comparingInt((Node n)->n.box.top).thenComparingInt(n->n.clickable?0:1));
         if(cards.isEmpty()) return null;
@@ -330,12 +331,16 @@ public final class Semantic {
         out.append("\n").append(pointsEvidence(scene).summary());
         out.append("\n").append(anchorEvidence(scene).summary());
         out.append("\nad=").append(describe(found.ad));
-        if(found.ad!=null)out.append(detail(found.ad));
-        else if(found.anchor==null)out.append(" reason=anchor_missing_or_ambiguous");
+        if(found.anchor==null)out.append(" reason=anchor_missing_or_ambiguous");
         else {
-            Map<String,Integer> reasons=new TreeMap<>();int eligible=0;
-            for(Node n:scene.nodes){String why=adRejection(scene,found.anchor,n);if(why==null)eligible++;else reasons.merge(why,1,Integer::sum);}
-            out.append(" reason=").append(eligible>0?"ambiguous_cards":"no_eligible_card").append(" rejected=").append(reasons);
+            Map<String,Integer> reasons=new TreeMap<>();int eligible=0,ocrSupport=0;
+            for(Node n:scene.nodes){
+                if(n.source.equals("OCR")){if(adRejection(scene,found.anchor,n)==null)ocrSupport++;continue;}
+                if(!n.source.equals("Accessibility"))continue;
+                String why=adRejection(scene,found.anchor,n);if(why==null)eligible++;else reasons.merge(why,1,Integer::sum);
+            }
+            out.append(" nativeCandidates=").append(eligible).append(" ocrSupport=").append(ocrSupport);
+            if(found.ad==null)out.append(" reason=").append(eligible>0?"ambiguous_cards":"no_eligible_card").append(" rejected=").append(reasons);
         }
         return out.toString();
     }
