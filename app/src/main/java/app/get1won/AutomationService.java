@@ -22,6 +22,7 @@ public final class AutomationService extends AccessibilityService {
     private OcrTicket pending;
     private WindowOcr ocr;
     private final Set<String> pointsIds=new HashSet<>();
+    private final WindowGeometry windowGeometry=new WindowGeometry();
     private record Snapshot(Semantic.Scene scene,Map<Integer,AccessibilityNodeInfo> handles,int window,String pkg,int count,boolean partial) implements AutoCloseable {
         @SuppressWarnings("deprecation") public void close() { for(AccessibilityNodeInfo n:handles.values())n.recycle(); }
     }
@@ -64,6 +65,11 @@ public final class AutomationService extends AccessibilityService {
         main.removeCallbacks(scanTask);main.postDelayed(scanTask,delay);
     }
     private final Runnable scanTask=this::scan;
+    private Semantic.Box displayBounds(){return box(wm.getMaximumWindowMetrics().getBounds());}
+    private boolean geometry(Semantic.Box bounds) {
+        if(windowGeometry.observe(bounds,displayBounds(),AppState::log))return true;
+        pending=null;schedule(250);return false;
+    }
     private boolean guard(Snapshot s) {
         long generation=engine.generation;
         boolean valid=observations.window(s.pkg,s.window);
@@ -74,10 +80,11 @@ public final class AutomationService extends AccessibilityService {
         if(closed || !session || !engine.active()){updatePanel();return;}
         lastScan=SystemClock.uptimeMillis();
         if(pending!=null && !valid(pending))pending=null;
-        if(pending!=null && lastScan-pending.requested()>=8000){pending=null;engine.pause("screenshot/OCR 응답 시간 초과로 멈췄어요.");}
         try(Snapshot s=snapshot()) {
             if(s==null) { if(engine.expired(lastScan))engine.pause("대상 window가 가려졌거나 화면을 읽지 못했어요."); }
-            else if(engine.active() && guard(s)) {
+            else if(engine.active() && geometry(s.scene.screen()) && guard(s)) {
+                if(pending!=null && lastScan-pending.requested()>=8000){pending=null;engine.pause("screenshot/OCR 응답 시간 초과로 멈췄어요.");}
+                if(!engine.active()){Diagnostics.record(engine);updatePanel();return;}
                 Semantic.Found f=Semantic.inspect(s.scene);
                 long epoch=engine.actionEpoch,cycle=engine.cycleId;Engine.State state=engine.state;
                 if(engine.historyFallbackBeforeRetry(f,lastScan) && !engine.expired(lastScan))requestOcr(s);
@@ -89,6 +96,12 @@ public final class AutomationService extends AccessibilityService {
         if(engine.active())schedule(250);else pending=null;
     }
     private void requestOcr(Snapshot s) {
+        // A same-ID window can translate after the snapshot; do not create a ticket for it.
+        try(WindowIdentity live=window()) {
+            if(live==null){schedule(250);return;}
+            if(!geometry(live.bounds))return;
+            if(live.id!=s.window || !live.pkg.equals(s.pkg) || !live.bounds.equals(s.scene.screen())){pending=null;schedule(250);return;}
+        }
         long now=SystemClock.uptimeMillis();
         if(pending!=null || now-lastOcrRequest<500 || ocr==null || ocr.busy())return;
         if(WindowOcr.preparationFailed){engine.pause("한국어 글자 인식을 준비하지 못했어요.");return;}
@@ -103,21 +116,25 @@ public final class AutomationService extends AccessibilityService {
     public void acceptOcr(OcrTicket ticket,List<Semantic.Node> nodes,long frameTime) {
         if(!valid(ticket))return;
         pending=null;
+        String stage="OCR snapshot";
         try(Snapshot fresh=snapshot()) {
-            if(fresh==null || !guard(fresh))return;
+            if(fresh==null || !geometry(fresh.scene.screen()) || !guard(fresh))return;
+            stage="OCR merge/semantic";
             Semantic.Found found=observations.merge(ticket,fresh.scene,nodes,fresh.pkg,fresh.window,frameTime,SystemClock.uptimeMillis());
             if(found==null)return;
             Semantic.Scene merged=Semantic.mergeOcr(fresh.scene,nodes);
             Diagnostics.ocr("성공 ticket="+ticket.id()+" cycle="+ticket.cycle()+" nodes="+nodes.size()+" anchor="+(found.anchor()!=null));
             AppState.log("OCR 성공 nodes="+nodes.size()+" "+found.summary());
+            stage="action evaluation/dispatch";
             evaluate(new Snapshot(merged,fresh.handles,fresh.window,fresh.pkg,fresh.count,fresh.partial),found);
-        } catch(RuntimeException e){Diagnostics.ocr("처리 오류 ticket="+ticket.id());Diagnostics.error(new IllegalStateException("AutomationService.acceptOcr: merge/inspect/evaluate ticket="+ticket.id()+" state="+engine.state,e));engine.pause("글자 인식 결과 처리 오류로 멈췄어요.");}
-        Diagnostics.record(engine);updatePanel();if(engine.active())schedule(250);
+        } catch(RuntimeException e){Diagnostics.ocr("처리 오류 ticket="+ticket.id()+" stage="+stage);Diagnostics.error(new IllegalStateException("AutomationService.acceptOcr: "+stage+" ticket="+ticket.id()+" state="+engine.state,e));engine.pause(stage.startsWith("OCR")?"글자 인식 결과 처리 오류로 멈췄어요.":"화면 동작 처리 오류로 멈췄어요.");}
+        finally {Diagnostics.record(engine);updatePanel();if(engine.active())schedule(250);}
     }
     public boolean valid(OcrTicket t) {
         return !closed && session && engine.active() && t==pending && t.current(engine.generation,engine.cycleId,engine.state,engine.actionEpoch);
     }
     private void evaluate(Snapshot s,Semantic.Found f) {
+        if(!geometry(s.scene.screen()))return;
         Diagnostics.points(engine.state==Engine.State.HOME?Semantic.pointsEvidence(s.scene).summary():"");
         Diagnostics.anchor(engine.state==Engine.State.HOME && f.anchor()==null?Semantic.anchorEvidence(s.scene).summary():"");
         diagnostic="package="+s.pkg+" window="+s.window+" nodes="+s.count+" partial="+s.partial+"\n"+(engine.state==Engine.State.HOME?Semantic.diagnostics(s.scene,f):f.summary());
@@ -128,6 +145,7 @@ public final class AutomationService extends AccessibilityService {
         // Recheck the window immediately before dispatch. Handles are scoped to this snapshot only.
         try(WindowIdentity live=window()) {
             if(live==null){engine.defer(decision);return;}
+            if(!geometry(live.bounds) || !live.bounds.equals(s.scene.screen())){engine.defer(decision);pending=null;schedule(250);return;}
             if(!s.pkg.equals(live.pkg) || s.window!=live.id){
                 engine.defer(decision);observations.window(live.pkg,live.id);pending=null;pointsIds.clear();schedule(0);return;
             }
@@ -138,11 +156,14 @@ public final class AutomationService extends AccessibilityService {
             AppState.log("BACK "+(accepted?"요청 성공 / 실제 복귀 대기":"요청 실패"));
             engine.submitted(decision,accepted,SystemClock.uptimeMillis());return;
         }
-        if(decision.action()==Engine.Action.POINTS){clickPoints(s,decision);return;}
-        Semantic.Node node=decision.target();
-        if(node==null || node.box().width()==0 || node.box().height()==0 || !s.scene.screen().contains(node.box())) {
-            engine.pause("현재 클릭 bounds를 확인하지 못했어요.");return;
+        if(decision.action()==Engine.Action.POINTS){
+            try {clickPoints(s,decision);}
+            catch(RuntimeException e){Diagnostics.error(new IllegalStateException("POINTS input/gesture dispatch",e));AppState.log("POINTS input/gesture dispatch error");Diagnostics.pointsClickFailed();engine.pause("내 포인트 입력 처리 오류로 멈췄어요.");}
+            return;
         }
+        Semantic.Node node=decision.target();
+        if(node==null){engine.pause("현재 클릭 bounds를 확인하지 못했어요.");return;}
+        if(!WindowGeometry.input(node.box(),s.scene.screen(),displayBounds())){engine.defer(decision);schedule(250);return;}
         AppState.log(decision.action()+" decision attempt="+decision.attempt()+" window="+s.window+" "+Semantic.targetDiagnostics(s.scene,decision.target(),node));
         if(movePanelAway(node.box())){AppState.log("overlay moved: action deferred / fresh target 재탐색");engine.defer(decision);return;}
         AccessibilityNodeInfo handle=s.handles.get(node.id());
@@ -176,11 +197,12 @@ public final class AutomationService extends AccessibilityService {
         PointsDispatch.Plan plan;
         try(WindowIdentity live=window()) {
             boolean current=session && !closed && engine.current(decision);
-            boolean same=live!=null && live.id==observed.window && live.pkg.equals(observed.pkg);
-            plan=PointsDispatch.plan(target,exact,live==null?observed.scene.screen():live.bounds,current,same,false);
+            boolean same=live!=null && live.id==observed.window && live.pkg.equals(observed.pkg) && live.bounds.equals(observed.scene.screen());
+            if(live!=null && !geometry(live.bounds)){engine.defer(decision);return;}
+            plan=PointsDispatch.plan(target,exact,live==null?observed.scene.screen():live.bounds,displayBounds(),current,same,false);
             if(plan.mode()==PointsDispatch.Mode.DEFER) {
                 engine.defer(decision);if(current && live!=null)observations.window(live.pkg,live.id);
-                schedule(0);return;
+                schedule(250);return;
             }
             if(plan.mode()==PointsDispatch.Mode.INVALID) {
                 Diagnostics.pointsClickFailed();engine.pause("현재 클릭 bounds를 확인하지 못했어요.");return;
@@ -230,6 +252,7 @@ public final class AutomationService extends AccessibilityService {
     @SuppressWarnings("deprecation") private Snapshot snapshot() {
         try(WindowIdentity w=window()) {
             if(w==null)return null;
+            if(!geometry(w.bounds))return new Snapshot(new Semantic.Scene(List.of(),w.bounds),Map.of(),w.id,w.pkg,0,true);
             List<Semantic.Node> nodes=new ArrayList<>();Map<Integer,AccessibilityNodeInfo> handles=new HashMap<>();
             try {
                 // Platform text lookup prioritizes points outside the bounded general traversal.
